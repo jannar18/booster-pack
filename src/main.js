@@ -462,18 +462,19 @@ function animateFocus() {
 
 function settleCarousel(targetOffset) {
   const startOffset = carouselOffset;
+  const { sideStep } = selectionLayoutMetrics();
+  const stepDistance = Math.abs(targetOffset - startOffset) / sideStep;
   carouselTween?.cancel();
   carouselTween = tween({
-    duration: targetOffset === 0 ? 0.32 : 0.42,
-    easing: targetOffset === 0 ? ease.outCubic : ease.outBackSoft,
+    duration: 0.3 + Math.min(stepDistance, 2) * 0.08,
+    easing: ease.outCubic,
     onUpdate: (value) => {
       carouselOffset = lerp(startOffset, targetOffset, value);
       layoutSelection(carouselOffset);
     },
     onComplete: () => {
-      // All three packs share the same artwork, so recycling their visual slots
-      // after a completed swipe is imperceptible and keeps the openable pack in
-      // the center for the next gesture.
+      // Every pack shares the same artwork, so a whole-number rotation can be
+      // recycled invisibly while keeping the detailed openable pack centered.
       carouselOffset = 0;
       layoutSelection();
       carouselTween = null;
@@ -487,9 +488,12 @@ function finishWheelCarousel() {
   const commits = Math.abs(wheelGesture.total) > sideStep * 0.12 ||
     Math.abs(wheelGesture.lastDelta) > sideStep * 0.08;
   const direction = Math.sign(wheelGesture.total || wheelGesture.lastDelta);
+  const projectedOffset = carouselOffset + wheelGesture.lastDelta * 2.5;
+  let targetStep = Math.round(projectedOffset / sideStep);
+  if (commits && targetStep === 0) targetStep = direction;
   wheelGesture = null;
   wheelSettleTimer = null;
-  settleCarousel(commits && direction ? direction * sideStep : 0);
+  settleCarousel(commits ? targetStep * sideStep : 0);
 }
 
 function wheelCarousel(event) {
@@ -502,16 +506,15 @@ function wheelCarousel(event) {
   event.preventDefault();
   carouselTween?.cancel();
   carouselTween = null;
-  const { sideStep } = selectionLayoutMetrics();
   const worldDelta = -(horizontalDelta / innerWidth) * viewWidthAt(0);
   if (!wheelGesture) wheelGesture = { total: 0, lastDelta: 0 };
   wheelGesture.total += worldDelta;
   wheelGesture.lastDelta = worldDelta;
-  carouselOffset = clamp(carouselOffset + worldDelta, -sideStep * 1.15, sideStep * 1.15);
+  carouselOffset += worldDelta;
   layoutSelection(carouselOffset);
 
   if (wheelSettleTimer) clearTimeout(wheelSettleTimer);
-  wheelSettleTimer = setTimeout(finishWheelCarousel, 90);
+  wheelSettleTimer = setTimeout(finishWheelCarousel, 140);
 }
 
 async function animateOpening() {
@@ -703,6 +706,7 @@ function pointerDown(event) {
     id: event.pointerId,
     x: event.clientX,
     y: event.clientY,
+    startOffset: carouselOffset,
     moved: false,
     t: now,
     history: [{ x: event.clientX, t: now }],
@@ -721,7 +725,7 @@ function pointerMove(event) {
     dragging.history = dragging.history.filter((sample) => now - sample.t <= 120);
     // Convert screen travel to world travel so the packs remain glued to the
     // pointer on both narrow and wide viewports.
-    carouselOffset = (dx / innerWidth) * viewWidthAt(0);
+    carouselOffset = dragging.startOffset + (dx / innerWidth) * viewWidthAt(0);
     layoutSelection(carouselOffset);
   } else if (moment === 'm2' || moment === 'm3') {
     moment = 'm3';
@@ -749,12 +753,15 @@ function pointerUp(event) {
     const first = gesture.history[0];
     const last = gesture.history.at(-1) || first;
     const elapsed = Math.max(last.t - first.t, 1);
-    const velocity = ((last.x - first.x) / elapsed) * 1000;
-    const dx = event.clientX - gesture.x;
-    const commits = Math.abs(dx) > innerWidth * 0.09 || Math.abs(velocity) > 420;
-    const direction = Math.sign(dx || velocity);
+    const velocityPixels = ((last.x - first.x) / elapsed) * 1000;
+    const velocityWorld = (velocityPixels / innerWidth) * viewWidthAt(0);
     const sideStep = selectionLayoutMetrics().sideStep;
-    settleCarousel(commits && direction ? direction * sideStep : 0);
+    const projectedOffset = carouselOffset + velocityWorld * 0.1;
+    let targetStep = Math.round(projectedOffset / sideStep);
+    if (Math.abs(velocityPixels) > 420 && targetStep === 0) {
+      targetStep = Math.sign(velocityPixels);
+    }
+    settleCarousel(targetStep * sideStep);
     return;
   }
   if ((moment === 'm2' || moment === 'm3') && cutProgress >= 0.78) { animateOpening(); return; }
