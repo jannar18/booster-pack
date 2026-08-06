@@ -1,11 +1,13 @@
 // Procedurally painted, fully original pack art for the "Lumen" TCG.
-// Front texture is 1024x1536; the top ~12% is the crimp+hood strip that gets sliced off.
+// Front texture is 1024x1536; the hood ends at the holographic tear seam.
 import * as THREE from 'three';
 import { makeCanvas, roundedRectPath, mulberry32 } from './util.js';
 
 export const PACK_W = 1024;
 export const PACK_H = 1536;
-export const CUT_Y_FRAC = 0.12;    // slice line, fraction from top of texture
+export const ART_Y_FRAC = 0.185;
+// Keep the physical cut and painted transition on the exact same coordinate.
+export const CUT_Y_FRAC = ART_Y_FRAC;
 
 // ---------- small painting helpers ----------
 function vGrad(ctx, x, y, w, h, stops) {
@@ -398,7 +400,7 @@ export function makePackFrontTexture() {
   ctx.fillText('S1', bX + bW / 2, bY + bH / 2 + 2);
 
   // === Art window (middle) — painterly grove scene ===
-  const artY = H * 0.185;
+  const artY = H * ART_Y_FRAC;
   const artH = H * 0.63;
   paintGroveScene(ctx, 0, artY, W, artH, r);
 
