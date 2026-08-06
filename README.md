@@ -20,5 +20,4 @@ npm run build
 npm run preview
 ```
 
-The static production build is written to `dist/`. Pushes to `main` deploy automatically to GitHub Pages.
-
+The static production build is written to `docs/`. GitHub Pages publishes that directory from `main`, so committed production builds deploy automatically.
