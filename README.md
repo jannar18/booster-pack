@@ -1,4 +1,4 @@
-# [Play Lumen — Aurora Grove](https://jannar18.github.io/booster-pack/)
+# [Play Lumen — Aurora Grove](https://lumen-aurora-grove.netlify.app/)
 
 Lumen is a tactile, mobile-first booster-pack opening experience built with Three.js. Choose an original foil pack, drag across its seam to tear it open, reveal five procedurally selected cards, and keep every pull in a persistent browser collection.
 
@@ -20,4 +20,10 @@ npm run build
 npm run preview
 ```
 
-The static production build is written to `docs/`. Every push to `main` builds and deploys automatically with GitHub Pages.
+The static production build is written to `docs/`. Publish it to the linked Netlify site with:
+
+```bash
+npx netlify-cli deploy --prod --dir=docs
+```
+
+The GitHub Pages workflow remains available as a hosting mirror.
