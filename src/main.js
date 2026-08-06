@@ -189,20 +189,19 @@ function focusedPackY() {
 
 function selectionLayoutMetrics() {
   const centerScale = selectionPackScale();
-  const nearZ = -0.34;
-  const outerZ = -1.18;
-  const sideViewWidth = viewWidthAt(nearZ);
-  const sideStep = sideViewWidth * 0.19;
-  const nearScale = Math.min(
-    packScaleAt(0.5, 0.68, nearZ, PACK_Y_SCALE),
-    centerScale * 0.9,
-  );
-  const outerScale = centerScale * 0.48;
-  return { centerScale, nearScale, outerScale, nearZ, outerZ, sideStep };
+  // Nine evenly spaced packs complete a ring without duplicating the rear
+  // position. The ring radius is viewport-relative so the near side packs sit
+  // near the edges while the remaining packs curl back into the scene.
+  const angleStep = (Math.PI * 2) / (CAROUSEL_SIDE_COUNT * 2 + 1);
+  // On portrait screens width alone produces a tiny, crowded orbit. Using the
+  // larger scene dimension preserves the same physical depth as landscape.
+  const ringRadius = Math.max(viewWidthAt(0), viewHeightAt(0)) * 0.5;
+  const sideStep = ringRadius * Math.sin(angleStep);
+  return { centerScale, angleStep, ringRadius, sideStep };
 }
 
 function layoutSelection(offset = carouselOffset) {
-  const { centerScale, nearScale, outerScale, nearZ, outerZ, sideStep } = selectionLayoutMetrics();
+  const { centerScale, angleStep, ringRadius, sideStep } = selectionLayoutMetrics();
   const entries = [
     ...leftPacks.map((object, index) => ({
       object,
@@ -222,35 +221,23 @@ function layoutSelection(offset = carouselOffset) {
   ];
 
   entries.forEach(({ object, reflection: item, slot }) => {
-    const x = slot * sideStep + offset;
-    const slotProgress = clamp(Math.abs(x) / sideStep, 0, CAROUSEL_SIDE_COUNT);
-    const nearProgress = Math.min(slotProgress, 1);
-    const outerProgress = Math.max(slotProgress - 1, 0) / (CAROUSEL_SIDE_COUNT - 1);
-    const objectScale = slotProgress <= 1
-      ? lerp(centerScale, nearScale, nearProgress)
-      : lerp(nearScale, outerScale, outerProgress);
-    const direction = Math.sign(x);
-    const yawMagnitude = slotProgress <= 1
-      ? 0.5 * nearProgress
-      : lerp(0.5, 1.28, outerProgress);
-    const yaw = direction * yawMagnitude;
-    const roll = direction * Math.min(slotProgress, 2) * 0.012;
-    const z = slotProgress <= 1
-      ? lerp(0, nearZ, nearProgress)
-      : lerp(nearZ, outerZ, outerProgress);
-    const y = slotProgress <= 1
-      ? lerp(0.12, -0.02, nearProgress)
-      : lerp(-0.02, -0.16, outerProgress);
+    const angle = slot * angleStep + (offset / sideStep) * angleStep;
+    const x = Math.sin(angle) * ringRadius;
+    const z = (Math.cos(angle) - 1) * ringRadius;
+    const depthProgress = (1 - Math.cos(angle)) * 0.5;
+    const y = lerp(0.12, 0, depthProgress);
+    const roll = Math.sin(angle) * 0.018;
     object.position.set(x, y, z);
-    // Packs turn progressively away from the center, forming a dense convex
-    // ring with near neighbors and partial outer packs like the reference.
-    object.rotation.set(0, yaw, roll);
-    setPackScale(object, objectScale);
+    // Each pouch faces radially outward from the ring. Perspective now creates
+    // the size change naturally, while the far packs wrap inward behind the
+    // selected pouch instead of continuing offscreen along a shallow arc.
+    object.rotation.set(0, angle, roll);
+    setPackScale(object, centerScale);
 
-    item.position.set(x, -2.48, -0.8);
-    item.rotation.y = yaw;
-    item.scale.x = objectScale;
-    item.scale.y = -objectScale * PACK_Y_SCALE * 0.72;
+    item.position.set(x, -2.48 + y, z - 0.22);
+    item.rotation.y = angle;
+    item.scale.x = centerScale;
+    item.scale.y = -centerScale * PACK_Y_SCALE * 0.72;
   });
 
   return sideStep;
@@ -697,6 +684,7 @@ function state() {
     },
     cardRootZ: cardRoot.position.z,
     sideYaw: neighborPacks.map((item) => item.rotation.y),
+    sidePositions: neighborPacks.map((item) => item.position.toArray()),
   };
 }
 
