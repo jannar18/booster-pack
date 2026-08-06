@@ -100,7 +100,9 @@ let dragging = null;
 const CARD_HEIGHT = 2.95;
 const CARD_WIDTH = CARD_HEIGHT * CARD_ASPECT;
 const REVEAL_CARD_Z = 0.6;
-const EMERGING_CARD_Z = -0.05;
+// The foil front bulges to roughly z=0.3. Keep the rising card stack just in
+// front of that face so it emerges over the sleeve instead of ghosting behind.
+const EMERGING_CARD_Z = 0.48;
 const SELECTION_PACK_WIDTH = 0.48;
 const SELECTION_PACK_Y_SCALE = 0.88;
 const SELECTION_PACK_MAX_HEIGHT = 0.62;
@@ -109,6 +111,18 @@ const FOCUSED_PACK_MAX_HEIGHT = 0.78;
 const REVEAL_CARD_MAX_HEIGHT = 0.76;
 const OPEN_PACK_Y = -0.18;
 const EMERGING_PACK_Y = -1.85;
+
+function releasedTopPose() {
+  return {
+    x: 1.3,
+    y: pack.closedTopY + 0.74,
+    z: 0.4,
+    rx: 0.12,
+    ry: 0.22,
+    rz: 0.28,
+    scale: 0.78,
+  };
+}
 
 function fitScaleAt({ widthFraction, heightFraction, objectWidth, objectHeight, z = 0, yScale = 1 }) {
   const scaleForWidth = (viewWidthAt(z) * widthFraction) / objectWidth;
@@ -270,7 +284,7 @@ function resetTransforms() {
   pack.group.rotation.set(0, 0, 0);
   pack.group.scale.setScalar(1);
   pack.body.position.set(0, 0, 0);
-  pack.top.position.set(0, PACK_WORLD_H / 2 - PACK_WORLD_H * 0.145 / 2, 0);
+  pack.top.position.set(0, pack.closedTopY, 0);
   pack.top.rotation.set(0, 0, 0);
   pack.top.scale.setScalar(1);
   pack.top.visible = true;
@@ -339,10 +353,11 @@ function applyMoment(id) {
   setCut(0);
 
   if (id === 'm4') {
+    const topPose = releasedTopPose();
     pack.group.position.y = OPEN_PACK_Y;
-    pack.top.position.set(0.42, 1.78, 0.18);
-    pack.top.rotation.set(0.08, 0.16, 0.22);
-    pack.top.scale.setScalar(0.7);
+    pack.top.position.set(topPose.x, topPose.y, topPose.z);
+    pack.top.rotation.set(topPose.rx, topPose.ry, topPose.rz);
+    pack.top.scale.setScalar(topPose.scale);
     pack.throat.rotation.x = Math.PI / 2 - 0.35;
     pack.throat.position.z = 0.16;
     pack.body.position.y = -0.17;
@@ -412,7 +427,7 @@ async function animateOpening() {
   setCut(0);
   const topY = pack.top.position.y;
   const packY = pack.group.position.y;
-  const topTarget = { x: 0.42, y: 1.78, z: 0.18, rx: 0.08, ry: 0.16, rz: 0.22, scale: 0.7 };
+  const topTarget = releasedTopPose();
   pack.throat.rotation.x = Math.PI / 2 - 0.35;
   pack.throat.position.z = 0.16;
   tween({ duration: 0.8, easing: ease.outCubic, onUpdate: (v) => {

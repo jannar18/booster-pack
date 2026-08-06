@@ -219,6 +219,8 @@ export function createPack() {
   return {
     group, body, top, rim, underRim, throat,
     frontTex, backTex,
+    closedTopY: topCenterY,
+    topHeight: topH,
     cutWorldY: () => PACK_WORLD_H * (CUT_V - 0.5),
     showMouth(opacity = 1) {
       rim.material.opacity = opacity;
