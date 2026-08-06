@@ -27,12 +27,17 @@ const pack = createPack();
 pack.group.renderOrder = 3;
 world.add(pack.group);
 
-const farLeftPack = createPackLite(pack.frontTex, pack.backTex);
-const leftPack = createPackLite(pack.frontTex, pack.backTex);
-const rightPack = createPackLite(pack.frontTex, pack.backTex);
-const farRightPack = createPackLite(pack.frontTex, pack.backTex);
-const neighborPacks = [farLeftPack, leftPack, rightPack, farRightPack];
-world.add(farLeftPack, leftPack, rightPack, farRightPack);
+const CAROUSEL_SIDE_COUNT = 4;
+const leftPacks = Array.from(
+  { length: CAROUSEL_SIDE_COUNT },
+  () => createPackLite(pack.frontTex, pack.backTex),
+);
+const rightPacks = Array.from(
+  { length: CAROUSEL_SIDE_COUNT },
+  () => createPackLite(pack.frontTex, pack.backTex),
+);
+const neighborPacks = [...leftPacks, ...rightPacks];
+world.add(...neighborPacks);
 
 function reflection(texture) {
   const material = new THREE.MeshBasicMaterial({
@@ -49,7 +54,10 @@ function reflection(texture) {
   return mesh;
 }
 
-const reflections = Array.from({ length: 5 }, () => reflection(pack.frontTex));
+const reflections = Array.from(
+  { length: CAROUSEL_SIDE_COUNT * 2 + 1 },
+  () => reflection(pack.frontTex),
+);
 world.add(...reflections);
 
 const cutGroup = new THREE.Group();
@@ -101,6 +109,8 @@ let focused = false;
 let dragging = null;
 let carouselOffset = 0;
 let carouselTween = null;
+let wheelGesture = null;
+let wheelSettleTimer = null;
 
 const CARD_HEIGHT = 2.95;
 const CARD_WIDTH = CARD_HEIGHT * CARD_ASPECT;
@@ -179,43 +189,58 @@ function focusedPackY() {
 
 function selectionLayoutMetrics() {
   const centerScale = selectionPackScale();
-  const nearZ = -0.42;
-  const farZ = -0.86;
+  const nearZ = -0.34;
+  const outerZ = -1.18;
   const sideViewWidth = viewWidthAt(nearZ);
-  const sideStep = sideViewWidth * 0.235;
+  const sideStep = sideViewWidth * 0.19;
   const nearScale = Math.min(
     packScaleAt(0.5, 0.68, nearZ, PACK_Y_SCALE),
-    centerScale * 0.88,
+    centerScale * 0.9,
   );
-  const farScale = centerScale * 0.72;
-  return { centerScale, nearScale, farScale, nearZ, farZ, sideStep };
+  const outerScale = centerScale * 0.48;
+  return { centerScale, nearScale, outerScale, nearZ, outerZ, sideStep };
 }
 
 function layoutSelection(offset = carouselOffset) {
-  const { centerScale, nearScale, farScale, nearZ, farZ, sideStep } = selectionLayoutMetrics();
+  const { centerScale, nearScale, outerScale, nearZ, outerZ, sideStep } = selectionLayoutMetrics();
   const entries = [
-    { object: farLeftPack, reflection: reflections[0], x: -sideStep * 2 + offset },
-    { object: leftPack, reflection: reflections[1], x: -sideStep + offset },
-    { object: pack.group, reflection: reflections[2], x: offset },
-    { object: rightPack, reflection: reflections[3], x: sideStep + offset },
-    { object: farRightPack, reflection: reflections[4], x: sideStep * 2 + offset },
+    ...leftPacks.map((object, index) => ({
+      object,
+      reflection: reflections[index],
+      slot: index - CAROUSEL_SIDE_COUNT,
+    })),
+    {
+      object: pack.group,
+      reflection: reflections[CAROUSEL_SIDE_COUNT],
+      slot: 0,
+    },
+    ...rightPacks.map((object, index) => ({
+      object,
+      reflection: reflections[CAROUSEL_SIDE_COUNT + 1 + index],
+      slot: index + 1,
+    })),
   ];
 
-  entries.forEach(({ object, reflection: item, x }) => {
-    const slotProgress = clamp(Math.abs(x) / sideStep, 0, 2);
+  entries.forEach(({ object, reflection: item, slot }) => {
+    const x = slot * sideStep + offset;
+    const slotProgress = clamp(Math.abs(x) / sideStep, 0, CAROUSEL_SIDE_COUNT);
     const nearProgress = Math.min(slotProgress, 1);
-    const farProgress = Math.max(slotProgress - 1, 0);
+    const outerProgress = Math.max(slotProgress - 1, 0) / (CAROUSEL_SIDE_COUNT - 1);
     const objectScale = slotProgress <= 1
       ? lerp(centerScale, nearScale, nearProgress)
-      : lerp(nearScale, farScale, farProgress);
-    const yaw = clamp(x / sideStep, -1.55, 1.55) * 0.66;
-    const roll = clamp(x / sideStep, -1.55, 1.55) * 0.015;
+      : lerp(nearScale, outerScale, outerProgress);
+    const direction = Math.sign(x);
+    const yawMagnitude = slotProgress <= 1
+      ? 0.5 * nearProgress
+      : lerp(0.5, 1.28, outerProgress);
+    const yaw = direction * yawMagnitude;
+    const roll = direction * Math.min(slotProgress, 2) * 0.012;
     const z = slotProgress <= 1
       ? lerp(0, nearZ, nearProgress)
-      : lerp(nearZ, farZ, farProgress);
+      : lerp(nearZ, outerZ, outerProgress);
     const y = slotProgress <= 1
-      ? lerp(0.12, -0.03, nearProgress)
-      : lerp(-0.03, -0.1, farProgress);
+      ? lerp(0.12, -0.02, nearProgress)
+      : lerp(-0.02, -0.16, outerProgress);
     object.position.set(x, y, z);
     // Packs turn progressively away from the center, forming a dense convex
     // ring with near neighbors and partial outer packs like the reference.
@@ -323,6 +348,9 @@ function resetTransforms() {
   cancelAllTweens();
   carouselTween = null;
   carouselOffset = 0;
+  if (wheelSettleTimer) clearTimeout(wheelSettleTimer);
+  wheelSettleTimer = null;
+  wheelGesture = null;
   sequenceToken += 1;
   focused = false;
   pack.group.visible = true;
@@ -464,6 +492,39 @@ function settleCarousel(targetOffset) {
       carouselTween = null;
     },
   });
+}
+
+function finishWheelCarousel() {
+  if (!wheelGesture || moment !== 'm1') return;
+  const { sideStep } = selectionLayoutMetrics();
+  const commits = Math.abs(wheelGesture.total) > sideStep * 0.12 ||
+    Math.abs(wheelGesture.lastDelta) > sideStep * 0.08;
+  const direction = Math.sign(wheelGesture.total || wheelGesture.lastDelta);
+  wheelGesture = null;
+  wheelSettleTimer = null;
+  settleCarousel(commits && direction ? direction * sideStep : 0);
+}
+
+function wheelCarousel(event) {
+  if (moment !== 'm1') return;
+  const horizontalDelta = Math.abs(event.deltaX) >= Math.abs(event.deltaY) * 0.65
+    ? event.deltaX
+    : event.shiftKey ? event.deltaY : 0;
+  if (Math.abs(horizontalDelta) < 0.5) return;
+
+  event.preventDefault();
+  carouselTween?.cancel();
+  carouselTween = null;
+  const { sideStep } = selectionLayoutMetrics();
+  const worldDelta = -(horizontalDelta / innerWidth) * viewWidthAt(0);
+  if (!wheelGesture) wheelGesture = { total: 0, lastDelta: 0 };
+  wheelGesture.total += worldDelta;
+  wheelGesture.lastDelta = worldDelta;
+  carouselOffset = clamp(carouselOffset + worldDelta, -sideStep * 1.15, sideStep * 1.15);
+  layoutSelection(carouselOffset);
+
+  if (wheelSettleTimer) clearTimeout(wheelSettleTimer);
+  wheelSettleTimer = setTimeout(finishWheelCarousel, 90);
 }
 
 async function animateOpening() {
@@ -642,6 +703,9 @@ function state() {
 function pointerDown(event) {
   if (event.button != null && event.button !== 0) return;
   if (moment === 'm1') {
+    if (wheelSettleTimer) clearTimeout(wheelSettleTimer);
+    wheelSettleTimer = null;
+    wheelGesture = null;
     carouselTween?.cancel();
     carouselTween = null;
   }
@@ -720,6 +784,7 @@ renderer.domElement.addEventListener('pointerdown', pointerDown);
 renderer.domElement.addEventListener('pointermove', pointerMove);
 renderer.domElement.addEventListener('pointerup', pointerUp);
 renderer.domElement.addEventListener('pointercancel', pointerUp);
+renderer.domElement.addEventListener('wheel', wheelCarousel, { passive: false });
 renderer.domElement.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); advance(); }
   if (event.key === 'Escape' && library.classList.contains('open')) closeCollection();
