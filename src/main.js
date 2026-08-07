@@ -221,6 +221,7 @@ let cutVisualProgress = 0;
 let cutReleaseFlash = 0;
 let sequenceToken = 0;
 let focused = false;
+let completionPending = false;
 let dragging = null;
 let carouselOffset = 0;
 let carouselTween = null;
@@ -484,6 +485,7 @@ function resetTransforms() {
   wheelGesture = null;
   sequenceToken += 1;
   focused = false;
+  completionPending = false;
   pack.group.visible = true;
   pack.body.visible = true;
   pack.top.visible = true;
@@ -666,7 +668,7 @@ function wheelCarousel(event) {
 
 async function animateOpening() {
   const token = ++sequenceToken;
-  audio.endCut(true);
+  audio.endCut();
   moment = 'm3';
   setLabel('Seal released');
   navigator.vibrate?.(12);
@@ -730,12 +732,18 @@ async function animateOpening() {
 }
 
 function advance() {
+  if (completionPending) return;
   if (moment === 'm1') { animateFocus(); return; }
   if (moment === 'm2') { setCut(1); animateOpening(); return; }
   if (moment !== 'm6') { goto('m6'); persistPack(); return; }
   if (revealIndex >= cardMeshes.length - 1) {
+    completionPending = true;
+    const token = sequenceToken;
+    setLabel('Pack complete');
     audio.completePack();
-    restart({ playSound: false });
+    window.setTimeout(() => {
+      if (token === sequenceToken) restart({ playSound: false });
+    }, 420);
     return;
   }
 

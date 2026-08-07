@@ -1,4 +1,22 @@
 const MUTE_STORAGE_KEY = 'lumen.sound-muted.v1';
+const AUDIO_ROOT = `${import.meta.env.BASE_URL}audio/`;
+
+const SAMPLE_FILES = {
+  packTouch: 'pack-touch.mp3',
+  grain1: 'foil-grain-1.mp3',
+  grain2: 'foil-grain-2.mp3',
+  grain3: 'foil-grain-3.mp3',
+  grain4: 'foil-grain-4.mp3',
+  sealRelease: 'seal-release.mp3',
+  foilPeel: 'foil-peel.mp3',
+  cardsRise: 'cards-rise.mp3',
+  cardContact1: 'card-contact-1.mp3',
+  cardContact2: 'card-contact-2.mp3',
+  auroraChime: 'aurora-chime.mp3',
+};
+
+const CUT_GRAINS = ['grain1', 'grain2', 'grain3', 'grain4'];
+const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
 
 export function createAudioController({ onMuteChange } = {}) {
   let muted = false;
@@ -7,27 +25,58 @@ export function createAudioController({ onMuteChange } = {}) {
 
   let context = null;
   let master = null;
-  let noiseBuffer = null;
-  let cutVoice = null;
+  let materialBus = null;
+  let magicBus = null;
+  let loadPromise = null;
   let cutRequested = false;
-  let cutRequestedProgress = 0;
+  let cutProgress = 0;
+  let cutSampleTime = 0;
+  let nextGrainTime = 0;
+  let grainIndex = 0;
+  const buffers = new Map();
+  const activeSources = new Set();
 
   function initialize() {
     if (context) return context;
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return null;
     context = new AudioContextClass();
+
     const compressor = context.createDynamicsCompressor();
-    compressor.threshold.value = -18;
-    compressor.knee.value = 14;
-    compressor.ratio.value = 4;
-    compressor.attack.value = 0.004;
-    compressor.release.value = 0.18;
+    compressor.threshold.value = -22;
+    compressor.knee.value = 18;
+    compressor.ratio.value = 3;
+    compressor.attack.value = 0.006;
+    compressor.release.value = 0.22;
+
     master = context.createGain();
-    master.gain.value = 0.72;
+    materialBus = context.createGain();
+    magicBus = context.createGain();
+    master.gain.value = 0.78;
+    materialBus.gain.value = 0.92;
+    magicBus.gain.value = 0.42;
+    materialBus.connect(master);
+    magicBus.connect(master);
     master.connect(compressor);
     compressor.connect(context.destination);
     return context;
+  }
+
+  async function loadSamples() {
+    if (loadPromise) return loadPromise;
+    const ctx = initialize();
+    if (!ctx) return false;
+    loadPromise = Promise.all(Object.entries(SAMPLE_FILES).map(async ([name, file]) => {
+      try {
+        const response = await fetch(`${AUDIO_ROOT}${file}`);
+        if (!response.ok) throw new Error(`Audio request failed: ${response.status}`);
+        const buffer = await ctx.decodeAudioData(await response.arrayBuffer());
+        buffers.set(name, buffer);
+      } catch (error) {
+        console.warn(`[audio] Could not load ${file}`, error);
+      }
+    })).then(() => buffers.size > 0);
+    return loadPromise;
   }
 
   async function unlock() {
@@ -38,123 +87,54 @@ export function createAudioController({ onMuteChange } = {}) {
       try { await ctx.resume(); }
       catch { return false; }
     }
+    void loadSamples();
     return ctx.state === 'running';
   }
 
   function whenReady(effect) {
     if (muted) return;
-    void unlock().then((ready) => {
-      if (ready && !muted) effect(context);
+    void unlock().then(async (ready) => {
+      if (!ready) return;
+      await loadSamples();
+      if (!muted) effect();
     });
   }
 
-  function tone({
-    frequency,
-    endFrequency = frequency,
-    duration = 0.2,
-    gain = 0.035,
-    type = 'sine',
+  function playSample(name, {
+    gain = 0.3,
+    rate = 1,
+    pan = 0,
     delay = 0,
-    attack = 0.012,
-  }) {
-    if (!context || !master) return;
-    const start = context.currentTime + delay;
-    const stop = start + duration;
-    const oscillator = context.createOscillator();
-    const envelope = context.createGain();
-    oscillator.type = type;
-    oscillator.frequency.setValueAtTime(Math.max(1, frequency), start);
-    oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, endFrequency), stop);
-    envelope.gain.setValueAtTime(0.0001, start);
-    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0002, gain), start + attack);
-    envelope.gain.exponentialRampToValueAtTime(0.0001, stop);
-    oscillator.connect(envelope);
-    envelope.connect(master);
-    oscillator.start(start);
-    oscillator.stop(stop + 0.02);
-  }
+    duration,
+    bus = 'material',
+  } = {}) {
+    if (!context || muted) return null;
+    const buffer = buffers.get(name);
+    if (!buffer) return null;
 
-  function getNoiseBuffer() {
-    if (noiseBuffer || !context) return noiseBuffer;
-    const length = context.sampleRate;
-    noiseBuffer = context.createBuffer(1, length, context.sampleRate);
-    const samples = noiseBuffer.getChannelData(0);
-    let previous = 0;
-    for (let index = 0; index < length; index += 1) {
-      const white = Math.random() * 2 - 1;
-      previous = previous * 0.72 + white * 0.28;
-      samples[index] = previous;
-    }
-    return noiseBuffer;
-  }
-
-  function noise({
-    duration = 0.2,
-    gain = 0.025,
-    frequency = 1500,
-    endFrequency = frequency,
-    type = 'bandpass',
-    q = 0.8,
-    delay = 0,
-  }) {
-    if (!context || !master) return;
-    const start = context.currentTime + delay;
-    const stop = start + duration;
     const source = context.createBufferSource();
-    const filter = context.createBiquadFilter();
     const envelope = context.createGain();
-    source.buffer = getNoiseBuffer();
-    filter.type = type;
-    filter.Q.value = q;
-    filter.frequency.setValueAtTime(frequency, start);
-    filter.frequency.exponentialRampToValueAtTime(Math.max(20, endFrequency), stop);
-    envelope.gain.setValueAtTime(0.0001, start);
-    envelope.gain.exponentialRampToValueAtTime(gain, start + Math.min(0.018, duration * 0.2));
-    envelope.gain.exponentialRampToValueAtTime(0.0001, stop);
-    source.connect(filter);
-    filter.connect(envelope);
-    envelope.connect(master);
+    const destination = bus === 'magic' ? magicBus : materialBus;
+    const start = context.currentTime + Math.max(0, delay);
+    source.buffer = buffer;
+    source.playbackRate.value = clamp(rate, 0.5, 1.8);
+    envelope.gain.value = Math.max(0.0001, gain);
+    source.connect(envelope);
+
+    if (context.createStereoPanner) {
+      const panner = context.createStereoPanner();
+      panner.pan.value = clamp(pan, -1, 1);
+      envelope.connect(panner);
+      panner.connect(destination);
+    } else {
+      envelope.connect(destination);
+    }
+
+    source.addEventListener('ended', () => activeSources.delete(source), { once: true });
+    activeSources.add(source);
     source.start(start);
-    source.stop(stop + 0.02);
-  }
-
-  function stopCutVoice(fade = 0.045) {
-    if (!cutVoice || !context) return;
-    const voice = cutVoice;
-    cutVoice = null;
-    const now = context.currentTime;
-    voice.gain.gain.cancelScheduledValues(now);
-    voice.gain.gain.setTargetAtTime(0.0001, now, Math.max(0.006, fade / 3));
-    try { voice.noise.stop(now + fade + 0.03); }
-    catch { /* The source may already have ended. */ }
-    try { voice.tone.stop(now + fade + 0.03); }
-    catch { /* The oscillator may already have ended. */ }
-  }
-
-  function startCutVoice() {
-    if (!context || !master || cutVoice || !cutRequested || muted) return;
-    const now = context.currentTime;
-    const noiseSource = context.createBufferSource();
-    const oscillator = context.createOscillator();
-    const filter = context.createBiquadFilter();
-    const gain = context.createGain();
-    noiseSource.buffer = getNoiseBuffer();
-    noiseSource.loop = true;
-    oscillator.type = 'sine';
-    oscillator.frequency.value = 720;
-    filter.type = 'bandpass';
-    filter.Q.value = 1.8;
-    filter.frequency.value = 1250;
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(0.018, now + 0.035);
-    noiseSource.connect(filter);
-    oscillator.connect(gain);
-    filter.connect(gain);
-    gain.connect(master);
-    noiseSource.start(now);
-    oscillator.start(now);
-    cutVoice = { noise: noiseSource, tone: oscillator, filter, gain };
-    updateCut(cutRequestedProgress);
+    if (duration) source.stop(start + Math.min(duration, buffer.duration / source.playbackRate.value));
+    return source;
   }
 
   function setMuted(nextMuted) {
@@ -163,11 +143,15 @@ export function createAudioController({ onMuteChange } = {}) {
     catch { /* Storage may be unavailable in private contexts. */ }
     if (muted) {
       cutRequested = false;
-      stopCutVoice(0.025);
+      activeSources.forEach((source) => {
+        try { source.stop(); }
+        catch { /* The source may already have ended. */ }
+      });
+      activeSources.clear();
       if (master && context) master.gain.setTargetAtTime(0.0001, context.currentTime, 0.01);
     } else {
       const ctx = initialize();
-      if (ctx && master) master.gain.setTargetAtTime(0.72, ctx.currentTime, 0.012);
+      if (ctx && master) master.gain.setTargetAtTime(0.78, ctx.currentTime, 0.012);
       void unlock();
     }
     onMuteChange?.(muted);
@@ -177,27 +161,39 @@ export function createAudioController({ onMuteChange } = {}) {
   function beginCut() {
     if (muted) return;
     cutRequested = true;
-    cutRequestedProgress = 0;
-    whenReady(() => startCutVoice());
+    cutProgress = 0;
+    cutSampleTime = performance.now();
+    nextGrainTime = cutSampleTime;
+    void unlock();
   }
 
   function updateCut(progress) {
-    cutRequestedProgress = Math.max(0, Math.min(1, progress));
-    if (!cutVoice || !context) return;
-    const now = context.currentTime;
-    cutVoice.filter.frequency.setTargetAtTime(1050 + cutRequestedProgress * 2100, now, 0.025);
-    cutVoice.tone.frequency.setTargetAtTime(640 + cutRequestedProgress * 560, now, 0.025);
-    cutVoice.gain.gain.setTargetAtTime(0.014 + cutRequestedProgress * 0.018, now, 0.02);
+    const nextProgress = clamp(progress, 0, 1);
+    const now = performance.now();
+    const elapsed = Math.max(8, now - cutSampleTime);
+    const distance = Math.abs(nextProgress - cutProgress);
+    const velocity = distance / (elapsed / 1000);
+    cutProgress = nextProgress;
+    cutSampleTime = now;
+
+    // A small dead zone prevents a sound on pointer-down, and requiring fresh
+    // travel keeps the foil silent whenever the hand stops moving.
+    if (!cutRequested || muted || nextProgress < 0.045 || distance < 0.004 || now < nextGrainTime) return;
+
+    const speed = clamp(velocity / 2.8, 0, 1);
+    const grain = CUT_GRAINS[grainIndex % CUT_GRAINS.length];
+    grainIndex += 1;
+    playSample(grain, {
+      gain: 0.2 + speed * 0.22,
+      rate: 0.88 + speed * 0.22 + ((grainIndex % 3) - 1) * 0.025,
+      pan: -0.82 + nextProgress * 1.64,
+      duration: 0.12 + speed * 0.045,
+    });
+    nextGrainTime = now + (88 - speed * 53);
   }
 
-  function endCut(completed = false) {
+  function endCut() {
     cutRequested = false;
-    stopCutVoice(completed ? 0.06 : 0.035);
-    if (!completed) return;
-    whenReady(() => {
-      noise({ duration: 0.11, gain: 0.046, frequency: 2400, endFrequency: 4200, q: 2.4 });
-      tone({ frequency: 980, endFrequency: 1480, duration: 0.14, gain: 0.028, type: 'triangle' });
-    });
   }
 
   const controller = {
@@ -209,77 +205,60 @@ export function createAudioController({ onMuteChange } = {}) {
     updateCut,
     endCut,
     selectPack() {
-      whenReady(() => {
-        noise({ duration: 0.18, gain: 0.018, frequency: 850, endFrequency: 1900 });
-        tone({ frequency: 230, endFrequency: 360, duration: 0.2, gain: 0.022, type: 'sine' });
-      });
+      whenReady(() => playSample('packTouch', { gain: 0.55, rate: 0.92 }));
     },
     carouselStep() {
-      whenReady(() => tone({ frequency: 310, endFrequency: 390, duration: 0.075, gain: 0.012, type: 'triangle' }));
+      whenReady(() => playSample('packTouch', { gain: 0.13, rate: 1.26 }));
     },
     releaseSeal() {
-      whenReady(() => {
-        noise({ duration: 0.26, gain: 0.048, frequency: 3400, endFrequency: 780, q: 1.4 });
-        tone({ frequency: 680, endFrequency: 180, duration: 0.28, gain: 0.024, type: 'triangle' });
-      });
+      whenReady(() => playSample('sealRelease', { gain: 0.68, rate: 1.03 }));
     },
     openFoil() {
-      whenReady(() => {
-        noise({ duration: 0.48, gain: 0.034, frequency: 2100, endFrequency: 620, q: 0.7 });
-        noise({ duration: 0.2, gain: 0.016, frequency: 4200, endFrequency: 1700, delay: 0.16, q: 2.1 });
-      });
+      whenReady(() => playSample('foilPeel', { gain: 0.52, rate: 0.96, delay: 0.085 }));
     },
     raiseCards() {
-      whenReady(() => {
-        tone({ frequency: 190, endFrequency: 440, duration: 0.64, gain: 0.025, type: 'sine' });
-        tone({ frequency: 285, endFrequency: 660, duration: 0.58, gain: 0.014, type: 'triangle', delay: 0.08 });
-      });
+      whenReady(() => playSample('cardsRise', { gain: 0.42, rate: 0.92 }));
     },
     revealCard(rarity = 'c', index = 0) {
       whenReady(() => {
-        const base = 420 + index * 28;
-        const notes = rarity === 'x' ? [1, 1.26, 1.5, 2] : rarity === 'r' ? [1, 1.25, 1.5] : rarity === 'u' ? [1, 1.25] : [1];
-        notes.forEach((ratio, noteIndex) => tone({
-          frequency: base * ratio,
-          endFrequency: base * ratio * 1.04,
-          duration: rarity === 'x' ? 0.48 : 0.24,
-          gain: (rarity === 'x' ? 0.025 : 0.02) / Math.sqrt(notes.length),
-          type: noteIndex % 2 ? 'triangle' : 'sine',
-          delay: noteIndex * 0.045,
-        }));
-        noise({ duration: 0.12, gain: rarity === 'x' ? 0.026 : 0.012, frequency: 3200, endFrequency: 5400 });
+        playSample(index % 2 ? 'cardContact2' : 'cardContact1', {
+          gain: index % 2 ? 0.54 : 0.64,
+          rate: 0.96 + (index % 3) * 0.025,
+        });
+        const magicGain = rarity === 'x' ? 0.2 : rarity === 'r' ? 0.13 : rarity === 'u' ? 0.065 : 0;
+        if (magicGain) playSample('auroraChime', {
+          gain: magicGain,
+          rate: rarity === 'x' ? 1.04 : rarity === 'r' ? 0.94 : 1.16,
+          delay: 0.055,
+          bus: 'magic',
+        });
       });
     },
     completePack() {
-      whenReady(() => {
-        [392, 494, 587, 784].forEach((frequency, index) => tone({
-          frequency,
-          endFrequency: frequency * 1.01,
-          duration: 0.42,
-          gain: 0.018,
-          delay: index * 0.065,
-        }));
-      });
+      whenReady(() => playSample('auroraChime', { gain: 0.16, rate: 0.86, bus: 'magic' }));
     },
-    restartPack() {
-      whenReady(() => noise({ duration: 0.22, gain: 0.018, frequency: 650, endFrequency: 1450 }));
-    },
+    restartPack() {},
     openCollection() {
-      whenReady(() => tone({ frequency: 280, endFrequency: 440, duration: 0.18, gain: 0.016, type: 'triangle' }));
+      whenReady(() => playSample('cardContact1', { gain: 0.18, rate: 1.18 }));
     },
     closeCollection() {
-      whenReady(() => tone({ frequency: 440, endFrequency: 260, duration: 0.15, gain: 0.014, type: 'triangle' }));
+      whenReady(() => playSample('cardContact1', { gain: 0.14, rate: 0.92 }));
     },
     suspend() {
       cutRequested = false;
-      stopCutVoice(0.02);
+      activeSources.forEach((source) => {
+        try { source.stop(); }
+        catch { /* The source may already have ended. */ }
+      });
+      activeSources.clear();
       if (context?.state === 'running') void context.suspend();
     },
     state: () => ({
       muted,
       available: Boolean(window.AudioContext || window.webkitAudioContext),
       contextState: context?.state || 'uninitialized',
-      cutting: Boolean(cutVoice),
+      samplesLoaded: buffers.size,
+      cutting: cutRequested,
     }),
   };
 
