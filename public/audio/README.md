@@ -20,8 +20,8 @@ They have been trimmed, filtered, faded, and compressed for this experience.
   - License: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)
   - Source page: https://opengameart.org/content/completion-sound
 - `selection-ambience.mp3`
-  - Original ambient mix created for Lumen from filtered pink noise and the
-    CC0 `aurora-chime.mp3` source documented above.
+  - Original ambient music composed for Lumen: a four-chord tonal pad with
+    sparse bell harmonics. It contains no sampled or generated nature noise.
 
 Attribution is not required by CC0, but the original creators are credited here in
 appreciation of their work. Do not replace these files with sounds extracted from

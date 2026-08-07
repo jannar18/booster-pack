@@ -152,7 +152,7 @@ export function createAudioController({ onMuteChange } = {}) {
     source.loop = true;
     source.loopEnd = buffer.duration;
     envelope.gain.setValueAtTime(0.0001, now);
-    envelope.gain.exponentialRampToValueAtTime(0.46, now + 1.1);
+    envelope.gain.exponentialRampToValueAtTime(0.28, now + 1.1);
     source.connect(envelope);
     envelope.connect(magicBus);
     source.addEventListener('ended', () => {
