@@ -3,7 +3,7 @@ import { createScene } from './scene.js';
 import { createPack, createPackLite, PACK_WORLD_W, PACK_WORLD_H } from './pack.js';
 import { CARD_ASPECT, cardTexture, makeCardCanvas } from './cardArt.js';
 import { CREATURES, RARITY_LABEL, drawPack } from './creatures.js';
-import { clock, tween, updateTweens, cancelAllTweens, ease, mulberry32, clamp, lerp } from './util.js';
+import { clock, tween, updateTweens, cancelAllTweens, ease, mulberry32, clamp, lerp, makeCanvas } from './util.js';
 
 const $ = (id) => document.getElementById(id);
 const app = $('app');
@@ -60,17 +60,117 @@ const reflections = Array.from(
 );
 world.add(...reflections);
 
+function makeSoftBandTexture() {
+  const [canvas, ctx] = makeCanvas(256, 64);
+  const vertical = ctx.createLinearGradient(0, 0, 0, 64);
+  vertical.addColorStop(0, 'rgba(255,255,255,0)');
+  vertical.addColorStop(0.34, 'rgba(255,255,255,0.18)');
+  vertical.addColorStop(0.5, 'rgba(255,255,255,1)');
+  vertical.addColorStop(0.66, 'rgba(255,255,255,0.18)');
+  vertical.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = vertical;
+  ctx.fillRect(0, 0, 256, 64);
+  const horizontal = ctx.createLinearGradient(0, 0, 256, 0);
+  horizontal.addColorStop(0, 'rgba(255,255,255,0.08)');
+  horizontal.addColorStop(0.06, '#fff');
+  horizontal.addColorStop(0.94, '#fff');
+  horizontal.addColorStop(1, 'rgba(255,255,255,0.12)');
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.fillStyle = horizontal;
+  ctx.fillRect(0, 0, 256, 64);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function makeRadialLightTexture() {
+  const [canvas, ctx] = makeCanvas(96, 96);
+  const glow = ctx.createRadialGradient(48, 48, 0, 48, 48, 48);
+  glow.addColorStop(0, '#fff');
+  glow.addColorStop(0.12, 'rgba(255,255,255,0.98)');
+  glow.addColorStop(0.38, 'rgba(255,255,255,0.42)');
+  glow.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, 96, 96);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const cutBandTexture = makeSoftBandTexture();
+const cutLightTexture = makeRadialLightTexture();
 const cutGroup = new THREE.Group();
-const cutCore = new THREE.Mesh(
-  new THREE.PlaneGeometry(PACK_WORLD_W, 0.035),
-  new THREE.MeshBasicMaterial({ color: 0xfffff1, transparent: true, opacity: 1, depthTest: false })
+const cutHaze = new THREE.Mesh(
+  new THREE.PlaneGeometry(PACK_WORLD_W, 0.34),
+  new THREE.MeshBasicMaterial({
+    map: cutBandTexture,
+    color: 0xffc869,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  })
 );
 const cutGlow = new THREE.Mesh(
-  new THREE.PlaneGeometry(PACK_WORLD_W * 1.15, 0.19),
-  new THREE.MeshBasicMaterial({ color: 0xffdd87, transparent: true, opacity: 0.42, blending: THREE.AdditiveBlending, depthTest: false })
+  new THREE.PlaneGeometry(PACK_WORLD_W, 0.15),
+  new THREE.MeshBasicMaterial({
+    map: cutBandTexture,
+    color: 0xffdc8a,
+    transparent: true,
+    opacity: 0,
+    blending: THREE.AdditiveBlending,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  })
 );
-cutCore.renderOrder = cutGlow.renderOrder = 10;
-cutGroup.add(cutGlow, cutCore);
+const cutCoreMaterial = new THREE.MeshBasicMaterial({
+  color: 0xffffff,
+  transparent: true,
+  opacity: 0,
+  blending: THREE.AdditiveBlending,
+  depthTest: false,
+  depthWrite: false,
+  toneMapped: false,
+});
+cutCoreMaterial.color.setRGB(2.35, 2.05, 1.15);
+const cutCore = new THREE.Mesh(new THREE.PlaneGeometry(PACK_WORLD_W, 0.022), cutCoreMaterial);
+
+function cutSprite(color, opacity = 0) {
+  return new THREE.Sprite(new THREE.SpriteMaterial({
+    map: cutLightTexture,
+    color,
+    transparent: true,
+    opacity,
+    blending: THREE.AdditiveBlending,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  }));
+}
+
+const cutHeadGlow = cutSprite(0xffcf72);
+const cutHeadCore = cutSprite(0xffffe8);
+cutHeadGlow.scale.set(0.34, 0.34, 1);
+cutHeadCore.scale.set(0.11, 0.11, 1);
+const cutShimmers = Array.from({ length: 5 }, (_, index) => {
+  const shimmer = cutSprite(index % 2 ? 0xffe7a5 : 0xffffff);
+  shimmer.scale.set(0.13 + index * 0.008, 0.075, 1);
+  return shimmer;
+});
+const cutSparks = Array.from({ length: 10 }, (_, index) => {
+  const spark = cutSprite(index % 3 ? 0xffe4a3 : 0xffffff);
+  const size = 0.025 + (index % 4) * 0.008;
+  spark.scale.set(size, size, 1);
+  return spark;
+});
+
+[cutHaze, cutGlow, cutCore, cutHeadGlow, cutHeadCore, ...cutShimmers, ...cutSparks]
+  .forEach((object) => { object.renderOrder = 10; });
+cutGroup.add(cutHaze, cutGlow, cutCore, cutHeadGlow, cutHeadCore, ...cutShimmers, ...cutSparks);
 cutGroup.position.set(0, pack.cutWorldY(), 0.52);
 pack.group.add(cutGroup);
 
@@ -104,6 +204,8 @@ let cardMeshes = [];
 let moment = 'm1';
 let revealIndex = 0;
 let cutProgress = 0;
+let cutVisualProgress = 0;
+let cutReleaseFlash = 0;
 let sequenceToken = 0;
 let focused = false;
 let dragging = null;
@@ -276,15 +378,43 @@ function setSkip(visible) {
   skipButton.classList.toggle('hidden', !visible);
 }
 
+function layoutCutLight(progress) {
+  const visibleWidth = PACK_WORLD_W * progress;
+  const centerX = -PACK_WORLD_W / 2 + visibleWidth / 2;
+  const headX = -PACK_WORLD_W / 2 + visibleWidth;
+  for (const layer of [cutHaze, cutGlow, cutCore]) {
+    layer.scale.x = progress;
+    layer.position.x = centerX;
+  }
+  cutHeadGlow.position.x = headX;
+  cutHeadCore.position.x = headX;
+}
+
 function setCut(value) {
-  cutProgress = Math.max(0, Math.min(1, value));
-  cutGroup.visible = cutProgress > 0.005;
-  cutCore.scale.x = cutProgress;
-  cutGlow.scale.x = cutProgress;
-  const x = -PACK_WORLD_W / 2 + (PACK_WORLD_W * cutProgress) / 2;
-  cutCore.position.x = x;
-  cutGlow.position.x = x - PACK_WORLD_W * 0.035;
-  cutGlow.material.opacity = 0.2 + cutProgress * 0.58;
+  cutProgress = clamp(value, 0, 1);
+  cutVisualProgress = cutProgress;
+  cutReleaseFlash = 0;
+  layoutCutLight(cutVisualProgress);
+  cutGroup.visible = cutVisualProgress > 0.005;
+}
+
+function releaseCutLight() {
+  cutProgress = 0;
+  cutVisualProgress = 1;
+  cutReleaseFlash = 1;
+  layoutCutLight(1);
+  tween({
+    from: 1,
+    to: 0,
+    duration: reducedMotion.matches ? 0.12 : 0.32,
+    easing: ease.outCubic,
+    onUpdate: (value) => { cutReleaseFlash = value; },
+    onComplete: () => {
+      cutReleaseFlash = 0;
+      cutVisualProgress = 0;
+      cutGroup.visible = false;
+    },
+  });
 }
 
 function removeCards() {
@@ -530,7 +660,7 @@ async function animateOpening() {
 
   moment = 'm4';
   pack.showMouth(1);
-  setCut(0);
+  releaseCutLight();
   const topY = pack.top.position.y;
   const packY = pack.group.position.y;
   const topTarget = releasedTopPose();
@@ -799,6 +929,68 @@ window.addEventListener('resize', () => {
   else if (moment === 'm6') cardRoot.scale.setScalar(revealCardScale());
 });
 
+function animateCutLight(time) {
+  const progress = cutVisualProgress;
+  const active = progress > 0.005 && (cutProgress > 0 || cutReleaseFlash > 0.005);
+  cutGroup.visible = active;
+  if (!active) return;
+
+  layoutCutLight(progress);
+  const animated = !reducedMotion.matches;
+  const pulse = animated
+    ? 0.96 + Math.sin(time * 9.7) * 0.025 + Math.sin(time * 4.1 + 0.8) * 0.018
+    : 1;
+  const completion = 0.76 + progress * 0.24;
+  const visibility = cutProgress > 0 ? 1 : cutReleaseFlash;
+  const flare = cutReleaseFlash;
+
+  cutHaze.material.opacity = Math.min(0.72, (0.12 + progress * 0.14 + flare * 0.28) * pulse * visibility);
+  cutGlow.material.opacity = Math.min(0.9, (0.32 + progress * 0.34 + flare * 0.22) * pulse * visibility);
+  cutCore.material.opacity = Math.min(1, (0.82 + progress * 0.16) * pulse * visibility);
+  cutHeadGlow.material.opacity = Math.min(1, (0.42 + completion * 0.24 + flare * 0.28) * visibility);
+  cutHeadCore.material.opacity = Math.min(1, (0.84 + flare * 0.16) * visibility);
+  const haloSize = (0.28 + progress * 0.09 + flare * 0.28) * pulse;
+  const coreSize = 0.075 + progress * 0.025 + flare * 0.045;
+  cutHeadGlow.scale.set(haloSize, haloSize, 1);
+  cutHeadCore.scale.set(coreSize, coreSize, 1);
+
+  if (!animated) {
+    cutShimmers.forEach((shimmer) => { shimmer.visible = false; });
+    cutSparks.forEach((spark) => { spark.visible = false; });
+    return;
+  }
+
+  const leftEdge = -PACK_WORLD_W / 2;
+  const visibleWidth = PACK_WORLD_W * progress;
+  cutShimmers.forEach((shimmer, index) => {
+    const phase = (time * 0.62 + index / cutShimmers.length) % 1;
+    shimmer.visible = visibleWidth > 0.08;
+    shimmer.position.set(
+      leftEdge + phase * visibleWidth,
+      Math.sin(time * 3.2 + index * 1.9) * 0.018,
+      0.012,
+    );
+    const shimmerScale = 0.1 + 0.08 * Math.sin(Math.PI * phase);
+    shimmer.scale.set(shimmerScale, 0.055 + completion * 0.028, 1);
+    shimmer.material.opacity = Math.sin(Math.PI * phase) * 0.48 * completion * visibility;
+  });
+
+  const headX = leftEdge + visibleWidth;
+  cutSparks.forEach((spark, index) => {
+    const age = (time * 1.35 + index / cutSparks.length) % 1;
+    const trail = Math.min(visibleWidth, 0.16 + progress * 0.28);
+    spark.visible = visibleWidth > 0.06;
+    spark.position.set(
+      headX - age * trail,
+      Math.sin(index * 2.4 + time * 5.3) * (0.025 + age * 0.045),
+      0.018,
+    );
+    const sparkSize = (0.024 + (index % 4) * 0.007) * (1 - age * 0.55) * (1 + flare * 0.8);
+    spark.scale.set(sparkSize, sparkSize, 1);
+    spark.material.opacity = Math.pow(1 - age, 1.6) * (0.34 + progress * 0.42) * visibility;
+  });
+}
+
 function animate(now) {
   requestAnimationFrame(animate);
   clock.tick(now);
@@ -809,6 +1001,7 @@ function animate(now) {
   } else if (moment === 'm2') {
     pack.group.rotation.y = Math.sin(time * 1.25) * 0.025;
   }
+  animateCutLight(time);
   sparkles.rotation.z = time * 0.035;
   sparkles.material.opacity = 0.36 + Math.sin(time * 2.1) * 0.12;
   if (aura.material.opacity > 0) {
