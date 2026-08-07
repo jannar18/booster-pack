@@ -171,7 +171,10 @@ const cutSparks = Array.from({ length: 10 }, (_, index) => {
 [cutHaze, cutGlow, cutCore, cutHeadGlow, cutHeadCore, ...cutShimmers, ...cutSparks]
   .forEach((object) => { object.renderOrder = 10; });
 cutGroup.add(cutHaze, cutGlow, cutCore, cutHeadGlow, cutHeadCore, ...cutShimmers, ...cutSparks);
-cutGroup.position.set(0, pack.cutWorldY(), 0.52);
+// Keep the overlay close to the foil surface. At the old z=0.52 the camera's
+// perspective projected this positive-y line several pixels above the printed
+// rainbow seam even though both shared the same world-space y coordinate.
+cutGroup.position.set(0, pack.cutWorldY(), 0.16);
 pack.group.add(cutGroup);
 
 const sparkleGeometry = new THREE.BufferGeometry();
