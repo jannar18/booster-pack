@@ -597,16 +597,39 @@ export function makeCardCanvas(creature) {
     ctx.restore();
     ctx.fillStyle = '#fff';
   }
-  ctx.font = `800 54px "Avenir Next", "Trebuchet MS", sans-serif`;
+  // Build the stat cluster from the gem inward. The HP value can be two or
+  // three digits, so measuring it prevents values like 100/110/130 from
+  // backing into the label.
+  const gemX = inX + inW - 44;
+  const gemRadius = 26;
+  const hpValue = String(creature.hp);
+  const hpValueRight = gemX - gemRadius - 8;
+  ctx.textAlign = 'right';
+  ctx.font = `800 56px "Avenir Next", sans-serif`;
+  const hpValueWidth = ctx.measureText(hpValue).width;
+  const hpLabelRight = hpValueRight - hpValueWidth - 14;
+  ctx.font = `700 30px "Avenir Next", sans-serif`;
+  const hpLabelWidth = ctx.measureText('HP').width;
+  const statsLeft = hpLabelRight - hpLabelWidth;
+
+  const nameX = inX + 34;
+  const nameMaxWidth = Math.max(1, statsLeft - nameX - 22);
+  let nameSize = 54;
+  ctx.font = `800 ${nameSize}px "Avenir Next", "Trebuchet MS", sans-serif`;
+  const measuredNameWidth = ctx.measureText(creature.name).width;
+  if (measuredNameWidth > nameMaxWidth) {
+    nameSize = Math.max(40, Math.floor(nameSize * nameMaxWidth / measuredNameWidth));
+    ctx.font = `800 ${nameSize}px "Avenir Next", "Trebuchet MS", sans-serif`;
+  }
   ctx.textAlign = 'left';
-  ctx.fillText(creature.name, inX + 34, headY + 52);
-  // HP
+  ctx.fillText(creature.name, nameX, headY + 52);
+
   ctx.textAlign = 'right';
   ctx.font = `700 30px "Avenir Next", sans-serif`;
-  ctx.fillText('HP', inX + inW - 150, headY + 50);
+  ctx.fillText('HP', hpLabelRight, headY + 50);
   ctx.font = `800 56px "Avenir Next", sans-serif`;
-  ctx.fillText(String(creature.hp), inX + inW - 78, headY + 52);
-  paintGem(ctx, inX + inW - 44, headY + 34, 26, E.gem);
+  ctx.fillText(hpValue, hpValueRight, headY + 52);
+  paintGem(ctx, gemX, headY + 34, gemRadius, E.gem);
 
   // ---- Art window (non-full-art) ----
   if (!fullArt) {
