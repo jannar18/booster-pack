@@ -27,9 +27,17 @@ const pack = createPack();
 pack.group.renderOrder = 3;
 world.add(pack.group);
 
-const leftPack = createPackLite(pack.frontTex, pack.backTex);
-const rightPack = createPackLite(pack.frontTex, pack.backTex);
-world.add(leftPack, rightPack);
+const CAROUSEL_SIDE_COUNT = 4;
+const leftPacks = Array.from(
+  { length: CAROUSEL_SIDE_COUNT },
+  () => createPackLite(pack.frontTex, pack.backTex),
+);
+const rightPacks = Array.from(
+  { length: CAROUSEL_SIDE_COUNT },
+  () => createPackLite(pack.frontTex, pack.backTex),
+);
+const neighborPacks = [...leftPacks, ...rightPacks];
+world.add(...neighborPacks);
 
 function reflection(texture) {
   const material = new THREE.MeshBasicMaterial({
@@ -46,7 +54,10 @@ function reflection(texture) {
   return mesh;
 }
 
-const reflections = [reflection(pack.frontTex), reflection(pack.frontTex), reflection(pack.frontTex)];
+const reflections = Array.from(
+  { length: CAROUSEL_SIDE_COUNT * 2 + 1 },
+  () => reflection(pack.frontTex),
+);
 world.add(...reflections);
 
 const cutGroup = new THREE.Group();
@@ -98,13 +109,19 @@ let focused = false;
 let dragging = null;
 let carouselOffset = 0;
 let carouselTween = null;
+let wheelGesture = null;
+let wheelSettleTimer = null;
 
 const CARD_HEIGHT = 2.95;
 const CARD_WIDTH = CARD_HEIGHT * CARD_ASPECT;
 const REVEAL_CARD_Z = 0.6;
-// The foil front bulges to roughly z=0.3. Keep the rising card stack just in
-// front of that face so it emerges over the sleeve instead of ghosting behind.
-const EMERGING_CARD_Z = 0.48;
+// Keep the rising stack between the pouch's back and front foil surfaces. The
+// lower card stays occluded by the sleeve while the exposed portion clears the
+// open mouth, which makes the cards read as physically inside the pack.
+const EMERGING_CARD_Z = 0.04;
+// The original carousel used a slightly compressed pouch silhouette. Preserve
+// that same proportion through selection, focus, cutting, and card emergence.
+const PACK_Y_SCALE = 0.88;
 const SELECTION_PACK_WIDTH = 0.48;
 const SELECTION_PACK_MAX_HEIGHT = 0.62;
 const FOCUSED_PACK_WIDTH = 0.79;
@@ -142,16 +159,26 @@ function packScaleAt(widthFraction, heightFraction, z = 0, yScale = 1) {
   });
 }
 
+function setPackScale(object, scale) {
+  object.scale.set(scale, scale * PACK_Y_SCALE, scale);
+}
+
 function selectionPackScale() {
   return packScaleAt(
     SELECTION_PACK_WIDTH,
     SELECTION_PACK_MAX_HEIGHT,
     0,
+    PACK_Y_SCALE,
   );
 }
 
 function focusedPackScale() {
-  return packScaleAt(FOCUSED_PACK_WIDTH, FOCUSED_PACK_MAX_HEIGHT, pack.group.position.z);
+  return packScaleAt(
+    FOCUSED_PACK_WIDTH,
+    FOCUSED_PACK_MAX_HEIGHT,
+    pack.group.position.z,
+    PACK_Y_SCALE,
+  );
 }
 
 // Keep the complete focused pouch inside the viewport. A slightly low center
@@ -162,38 +189,58 @@ function focusedPackY() {
 
 function selectionLayoutMetrics() {
   const centerScale = selectionPackScale();
-  const sideZ = -0.45;
-  const sideViewWidth = viewWidthAt(sideZ);
-  const sideScale = Math.min(packScaleAt(0.5, 0.68, sideZ), centerScale * 0.88);
-  return { centerScale, sideScale, sideZ, sideX: sideViewWidth * 0.52 };
+  // Nine evenly spaced packs complete a ring without duplicating the rear
+  // position. The ring radius is viewport-relative so the near side packs sit
+  // near the edges while the remaining packs curl back into the scene.
+  const angleStep = (Math.PI * 2) / (CAROUSEL_SIDE_COUNT * 2 + 1);
+  // On portrait screens width alone produces a tiny, crowded orbit. Using the
+  // larger scene dimension preserves the same physical depth as landscape.
+  const ringRadius = Math.max(viewWidthAt(0), viewHeightAt(0)) * 0.5;
+  const sideStep = ringRadius * Math.sin(angleStep);
+  return { centerScale, angleStep, ringRadius, sideStep };
 }
 
 function layoutSelection(offset = carouselOffset) {
-  const { centerScale, sideScale, sideZ, sideX } = selectionLayoutMetrics();
+  const { centerScale, angleStep, ringRadius, sideStep } = selectionLayoutMetrics();
   const entries = [
-    { object: leftPack, reflection: reflections[0], x: -sideX + offset },
-    { object: pack.group, reflection: reflections[1], x: offset },
-    { object: rightPack, reflection: reflections[2], x: sideX + offset },
+    ...leftPacks.map((object, index) => ({
+      object,
+      reflection: reflections[index],
+      slot: index - CAROUSEL_SIDE_COUNT,
+    })),
+    {
+      object: pack.group,
+      reflection: reflections[CAROUSEL_SIDE_COUNT],
+      slot: 0,
+    },
+    ...rightPacks.map((object, index) => ({
+      object,
+      reflection: reflections[CAROUSEL_SIDE_COUNT + 1 + index],
+      slot: index + 1,
+    })),
   ];
 
-  entries.forEach(({ object, reflection: item, x }) => {
-    const slotProgress = clamp(Math.abs(x) / sideX, 0, 1);
-    const objectScale = lerp(centerScale, sideScale, slotProgress);
-    const yaw = clamp(x / sideX, -1, 1) * 0.72;
-    const roll = clamp(x / sideX, -1, 1) * 0.02;
-    object.position.set(x, lerp(0.12, -0.06, slotProgress), sideZ * slotProgress);
-    // Packs on the left turn left and packs on the right turn right: their
-    // outer edges recede, so the carousel bows away from the viewer.
-    object.rotation.set(0, yaw, roll);
-    object.scale.setScalar(objectScale);
+  entries.forEach(({ object, reflection: item, slot }) => {
+    const angle = slot * angleStep + (offset / sideStep) * angleStep;
+    const x = Math.sin(angle) * ringRadius;
+    const z = (Math.cos(angle) - 1) * ringRadius;
+    const depthProgress = (1 - Math.cos(angle)) * 0.5;
+    const y = lerp(0.12, 0, depthProgress);
+    const roll = Math.sin(angle) * 0.018;
+    object.position.set(x, y, z);
+    // Each pouch faces radially outward from the ring. Perspective now creates
+    // the size change naturally, while the far packs wrap inward behind the
+    // selected pouch instead of continuing offscreen along a shallow arc.
+    object.rotation.set(0, angle, roll);
+    setPackScale(object, centerScale);
 
-    item.position.set(x, -2.48, -0.8);
-    item.rotation.y = yaw;
-    item.scale.x = objectScale;
-    item.scale.y = -objectScale * 0.72;
+    item.position.set(x, -2.48 + y, z - 0.22);
+    item.rotation.y = angle;
+    item.scale.x = centerScale;
+    item.scale.y = -centerScale * PACK_Y_SCALE * 0.72;
   });
 
-  return sideX;
+  return sideStep;
 }
 
 function revealCardScale() {
@@ -288,6 +335,9 @@ function resetTransforms() {
   cancelAllTweens();
   carouselTween = null;
   carouselOffset = 0;
+  if (wheelSettleTimer) clearTimeout(wheelSettleTimer);
+  wheelSettleTimer = null;
+  wheelGesture = null;
   sequenceToken += 1;
   focused = false;
   pack.group.visible = true;
@@ -295,7 +345,7 @@ function resetTransforms() {
   pack.top.visible = true;
   pack.group.position.set(0, 0, 0);
   pack.group.rotation.set(0, 0, 0);
-  pack.group.scale.setScalar(1);
+  setPackScale(pack.group, 1);
   pack.body.position.set(0, 0, 0);
   pack.top.position.set(0, pack.closedTopY, 0);
   pack.top.rotation.set(0, 0, 0);
@@ -304,22 +354,8 @@ function resetTransforms() {
   pack.throat.rotation.x = Math.PI / 2;
   pack.throat.position.z = -0.12;
   pack.showMouth(0);
-  leftPack.visible = true;
-  rightPack.visible = true;
-  leftPack.position.set(-2.55, -0.06, -0.45);
-  rightPack.position.set(2.55, -0.06, -0.45);
-  leftPack.rotation.set(0, 0.72, -0.02);
-  rightPack.rotation.set(0, -0.72, 0.02);
-  leftPack.scale.setScalar(0.76);
-  rightPack.scale.setScalar(0.76);
-  reflections.forEach((item, index) => {
-    const source = [leftPack, pack.group, rightPack][index];
-    item.visible = true;
-    item.position.set(source.position.x, -3.08, -0.8);
-    item.rotation.y = source.rotation.y;
-    item.scale.x = index === 1 ? 0.76 : 0.58;
-    item.scale.y = -(index === 1 ? 0.55 : 0.42);
-  });
+  neighborPacks.forEach((item) => { item.visible = true; });
+  reflections.forEach((item) => { item.visible = true; });
   cardRoot.visible = false;
   cardRoot.position.set(0, 0, REVEAL_CARD_Z);
   cardRoot.rotation.set(0, 0, 0);
@@ -348,10 +384,10 @@ function applyMoment(id) {
   }
 
   focused = true;
-  leftPack.visible = rightPack.visible = false;
+  neighborPacks.forEach((item) => { item.visible = false; });
   reflections.forEach((item) => { item.visible = false; });
   sparkles.visible = true;
-  pack.group.scale.setScalar(focusedPackScale());
+  setPackScale(pack.group, focusedPackScale());
   pack.group.position.y = focusedPackY();
 
   if (id === 'm2') return;
@@ -381,7 +417,7 @@ function applyMoment(id) {
   cardRoot.visible = true;
 
   if (id === 'm5') {
-    pack.group.scale.setScalar(0.86);
+    setPackScale(pack.group, 0.86);
     pack.group.position.y = EMERGING_PACK_Y;
     cardRoot.position.set(0, -1.22, EMERGING_CARD_Z);
     cardRoot.scale.setScalar(0.7);
@@ -408,7 +444,7 @@ function animateFocus() {
   moment = 'm2';
   focused = true;
   setLabel(COPY.m2);
-  leftPack.visible = rightPack.visible = false;
+  neighborPacks.forEach((item) => { item.visible = false; });
   reflections.forEach((item) => { item.visible = false; });
   const startScale = pack.group.scale.clone();
   const startY = pack.group.position.y;
@@ -417,7 +453,7 @@ function animateFocus() {
   tween({ duration: 0.56, easing: ease.outBackSoft, onUpdate: (value) => {
     pack.group.scale.set(
       startScale.x + (targetScale - startScale.x) * value,
-      startScale.y + (targetScale - startScale.y) * value,
+      startScale.y + (targetScale * PACK_Y_SCALE - startScale.y) * value,
       startScale.z + (targetScale - startScale.z) * value
     );
     pack.group.position.y = startY + (targetY - startY) * value;
@@ -426,23 +462,59 @@ function animateFocus() {
 
 function settleCarousel(targetOffset) {
   const startOffset = carouselOffset;
+  const { sideStep } = selectionLayoutMetrics();
+  const stepDistance = Math.abs(targetOffset - startOffset) / sideStep;
   carouselTween?.cancel();
   carouselTween = tween({
-    duration: targetOffset === 0 ? 0.32 : 0.42,
-    easing: targetOffset === 0 ? ease.outCubic : ease.outBackSoft,
+    duration: 0.3 + Math.min(stepDistance, 2) * 0.08,
+    easing: ease.outCubic,
     onUpdate: (value) => {
       carouselOffset = lerp(startOffset, targetOffset, value);
       layoutSelection(carouselOffset);
     },
     onComplete: () => {
-      // All three packs share the same artwork, so recycling their visual slots
-      // after a completed swipe is imperceptible and keeps the openable pack in
-      // the center for the next gesture.
+      // Every pack shares the same artwork, so a whole-number rotation can be
+      // recycled invisibly while keeping the detailed openable pack centered.
       carouselOffset = 0;
       layoutSelection();
       carouselTween = null;
     },
   });
+}
+
+function finishWheelCarousel() {
+  if (!wheelGesture || moment !== 'm1') return;
+  const { sideStep } = selectionLayoutMetrics();
+  const commits = Math.abs(wheelGesture.total) > sideStep * 0.12 ||
+    Math.abs(wheelGesture.lastDelta) > sideStep * 0.08;
+  const direction = Math.sign(wheelGesture.total || wheelGesture.lastDelta);
+  const projectedOffset = carouselOffset + wheelGesture.lastDelta * 2.5;
+  let targetStep = Math.round(projectedOffset / sideStep);
+  if (commits && targetStep === 0) targetStep = direction;
+  wheelGesture = null;
+  wheelSettleTimer = null;
+  settleCarousel(commits ? targetStep * sideStep : 0);
+}
+
+function wheelCarousel(event) {
+  if (moment !== 'm1') return;
+  const horizontalDelta = Math.abs(event.deltaX) >= Math.abs(event.deltaY) * 0.65
+    ? event.deltaX
+    : event.shiftKey ? event.deltaY : 0;
+  if (Math.abs(horizontalDelta) < 0.5) return;
+
+  event.preventDefault();
+  carouselTween?.cancel();
+  carouselTween = null;
+  const worldDelta = -(horizontalDelta / innerWidth) * viewWidthAt(0);
+  if (!wheelGesture) wheelGesture = { total: 0, lastDelta: 0 };
+  wheelGesture.total += worldDelta;
+  wheelGesture.lastDelta = worldDelta;
+  carouselOffset += worldDelta;
+  layoutSelection(carouselOffset);
+
+  if (wheelSettleTimer) clearTimeout(wheelSettleTimer);
+  wheelSettleTimer = setTimeout(finishWheelCarousel, 140);
 }
 
 async function animateOpening() {
@@ -485,7 +557,7 @@ async function animateOpening() {
   tween({ duration: 0.9, easing: ease.outQuint, onUpdate: (v) => {
     cardRoot.position.y = -1.78 + v * 0.56;
     pack.group.position.y = openPackY + (EMERGING_PACK_Y - openPackY) * v;
-    pack.group.scale.setScalar(focusedPackScale() + (0.86 - focusedPackScale()) * v);
+    setPackScale(pack.group, focusedPackScale() + (0.86 - focusedPackScale()) * v);
   }});
   await tween({ duration: 0.72, easing: ease.outCubic, delay: 0.43, onUpdate: () => {} }).promise;
   if (token !== sequenceToken) return;
@@ -613,13 +685,18 @@ function state() {
       yaw: pack.group.rotation.y,
       scale: pack.group.scale.toArray(),
     },
-    sideYaw: [leftPack.rotation.y, rightPack.rotation.y],
+    cardRootZ: cardRoot.position.z,
+    sideYaw: neighborPacks.map((item) => item.rotation.y),
+    sidePositions: neighborPacks.map((item) => item.position.toArray()),
   };
 }
 
 function pointerDown(event) {
   if (event.button != null && event.button !== 0) return;
   if (moment === 'm1') {
+    if (wheelSettleTimer) clearTimeout(wheelSettleTimer);
+    wheelSettleTimer = null;
+    wheelGesture = null;
     carouselTween?.cancel();
     carouselTween = null;
   }
@@ -629,6 +706,7 @@ function pointerDown(event) {
     id: event.pointerId,
     x: event.clientX,
     y: event.clientY,
+    startOffset: carouselOffset,
     moved: false,
     t: now,
     history: [{ x: event.clientX, t: now }],
@@ -647,7 +725,7 @@ function pointerMove(event) {
     dragging.history = dragging.history.filter((sample) => now - sample.t <= 120);
     // Convert screen travel to world travel so the packs remain glued to the
     // pointer on both narrow and wide viewports.
-    carouselOffset = (dx / innerWidth) * viewWidthAt(0);
+    carouselOffset = dragging.startOffset + (dx / innerWidth) * viewWidthAt(0);
     layoutSelection(carouselOffset);
   } else if (moment === 'm2' || moment === 'm3') {
     moment = 'm3';
@@ -675,12 +753,15 @@ function pointerUp(event) {
     const first = gesture.history[0];
     const last = gesture.history.at(-1) || first;
     const elapsed = Math.max(last.t - first.t, 1);
-    const velocity = ((last.x - first.x) / elapsed) * 1000;
-    const dx = event.clientX - gesture.x;
-    const commits = Math.abs(dx) > innerWidth * 0.09 || Math.abs(velocity) > 420;
-    const direction = Math.sign(dx || velocity);
-    const sideX = selectionLayoutMetrics().sideX;
-    settleCarousel(commits && direction ? direction * sideX : 0);
+    const velocityPixels = ((last.x - first.x) / elapsed) * 1000;
+    const velocityWorld = (velocityPixels / innerWidth) * viewWidthAt(0);
+    const sideStep = selectionLayoutMetrics().sideStep;
+    const projectedOffset = carouselOffset + velocityWorld * 0.1;
+    let targetStep = Math.round(projectedOffset / sideStep);
+    if (Math.abs(velocityPixels) > 420 && targetStep === 0) {
+      targetStep = Math.sign(velocityPixels);
+    }
+    settleCarousel(targetStep * sideStep);
     return;
   }
   if ((moment === 'm2' || moment === 'm3') && cutProgress >= 0.78) { animateOpening(); return; }
@@ -698,6 +779,7 @@ renderer.domElement.addEventListener('pointerdown', pointerDown);
 renderer.domElement.addEventListener('pointermove', pointerMove);
 renderer.domElement.addEventListener('pointerup', pointerUp);
 renderer.domElement.addEventListener('pointercancel', pointerUp);
+renderer.domElement.addEventListener('wheel', wheelCarousel, { passive: false });
 renderer.domElement.addEventListener('keydown', (event) => {
   if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); advance(); }
   if (event.key === 'Escape' && library.classList.contains('open')) closeCollection();
@@ -711,9 +793,9 @@ document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && 
 window.addEventListener('resize', () => {
   if (moment === 'm1') layoutSelection();
   else if (moment === 'm2' || moment === 'm3') {
-    pack.group.scale.setScalar(focusedPackScale());
+    setPackScale(pack.group, focusedPackScale());
     pack.group.position.y = focusedPackY();
-  } else if (moment === 'm4') pack.group.scale.setScalar(focusedPackScale());
+  } else if (moment === 'm4') setPackScale(pack.group, focusedPackScale());
   else if (moment === 'm6') cardRoot.scale.setScalar(revealCardScale());
 });
 
@@ -724,8 +806,6 @@ function animate(now) {
   const time = clock.t;
   if (moment === 'm1') {
     pack.group.position.y += ((0.12 + Math.sin(time * 1.8) * 0.025) - pack.group.position.y) * 0.05;
-    leftPack.position.y = -0.06 + Math.sin(time * 1.65 + 1) * 0.02;
-    rightPack.position.y = -0.06 + Math.sin(time * 1.65 + 2) * 0.02;
   } else if (moment === 'm2') {
     pack.group.rotation.y = Math.sin(time * 1.25) * 0.025;
   }
