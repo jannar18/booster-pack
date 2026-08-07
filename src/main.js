@@ -4,6 +4,7 @@ import { createPack, createPackLite, PACK_WORLD_W, PACK_WORLD_H } from './pack.j
 import { CARD_ASPECT, cardTexture, makeCardCanvas } from './cardArt.js';
 import { CREATURES, RARITY_LABEL, drawPack } from './creatures.js';
 import { clock, tween, updateTweens, cancelAllTweens, ease, mulberry32, clamp, lerp, makeCanvas } from './util.js';
+import { createAudioController } from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 const app = $('app');
@@ -15,6 +16,15 @@ const libraryGrid = $('libGrid');
 const libraryCount = $('libCount');
 const libraryStats = $('libStats');
 const skipButton = $('skipBtn');
+const audioButton = $('audioBtn');
+
+function renderAudioButton(muted) {
+  audioButton.setAttribute('aria-pressed', String(muted));
+  audioButton.setAttribute('aria-label', muted ? 'Turn sound on' : 'Mute sound');
+  audioButton.title = muted ? 'Turn sound on' : 'Mute sound';
+}
+
+const audio = createAudioController({ onMuteChange: renderAudioButton });
 
 const { scene, camera, composer, renderer, viewHeightAt, viewWidthAt } = createScene(app);
 renderer.domElement.setAttribute('aria-label', 'Interactive Lumen booster pack');
@@ -466,6 +476,7 @@ function buildCards(seed = 0x1a2b3c4d) {
 
 function resetTransforms() {
   cancelAllTweens();
+  audio.endCut(false);
   carouselTween = null;
   carouselOffset = 0;
   if (wheelSettleTimer) clearTimeout(wheelSettleTimer);
@@ -574,6 +585,7 @@ function goto(id) {
 
 function animateFocus() {
   if (moment !== 'm1') return;
+  audio.selectPack();
   moment = 'm2';
   focused = true;
   setLabel(COPY.m2);
@@ -597,6 +609,7 @@ function settleCarousel(targetOffset) {
   const startOffset = carouselOffset;
   const { sideStep } = selectionLayoutMetrics();
   const stepDistance = Math.abs(targetOffset - startOffset) / sideStep;
+  if (Math.abs(targetOffset) >= sideStep * 0.5) audio.carouselStep();
   carouselTween?.cancel();
   carouselTween = tween({
     duration: 0.3 + Math.min(stepDistance, 2) * 0.08,
@@ -636,6 +649,7 @@ function wheelCarousel(event) {
     : event.shiftKey ? event.deltaY : 0;
   if (Math.abs(horizontalDelta) < 0.5) return;
 
+  void audio.unlock();
   event.preventDefault();
   carouselTween?.cancel();
   carouselTween = null;
@@ -652,6 +666,7 @@ function wheelCarousel(event) {
 
 async function animateOpening() {
   const token = ++sequenceToken;
+  audio.endCut(true);
   moment = 'm3';
   setLabel('Seal released');
   navigator.vibrate?.(12);
@@ -662,6 +677,8 @@ async function animateOpening() {
   if (token !== sequenceToken) return;
 
   moment = 'm4';
+  audio.releaseSeal();
+  audio.openFoil();
   pack.showMouth(1);
   releaseCutLight();
   const topY = pack.top.position.y;
@@ -680,6 +697,7 @@ async function animateOpening() {
   if (token !== sequenceToken) return;
 
   moment = 'm5';
+  audio.raiseCards();
   pack.top.visible = false;
   setCut(0);
   cardRoot.visible = true;
@@ -705,14 +723,21 @@ async function animateOpening() {
     cardRoot.position.z = EMERGING_CARD_Z + (REVEAL_CARD_Z - EMERGING_CARD_Z) * v;
     cardRoot.position.y = startY + (-0.16 - startY) * v;
     cardRoot.scale.setScalar(startScale + (revealCardScale() - startScale) * v);
-  }, onComplete: () => setLabel(`${cards[0].name} · ${RARITY_LABEL[cards[0].rarity]} · tap to continue`) });
+  }, onComplete: () => {
+    setLabel(`${cards[0].name} · ${RARITY_LABEL[cards[0].rarity]} · tap to continue`);
+    audio.revealCard(cards[0].rarity, 0);
+  }});
 }
 
 function advance() {
   if (moment === 'm1') { animateFocus(); return; }
   if (moment === 'm2') { setCut(1); animateOpening(); return; }
   if (moment !== 'm6') { goto('m6'); persistPack(); return; }
-  if (revealIndex >= cardMeshes.length - 1) { restart(); return; }
+  if (revealIndex >= cardMeshes.length - 1) {
+    audio.completePack();
+    restart({ playSound: false });
+    return;
+  }
 
   const outgoing = cardMeshes[revealIndex];
   const next = cards[revealIndex + 1];
@@ -727,6 +752,7 @@ function advance() {
     outgoing.material.opacity = 1 - v;
   }, onComplete: () => { outgoing.visible = false; } });
   aura.material.opacity = next.rarity === 'x' ? 0.5 : next.rarity === 'r' ? 0.23 : 0;
+  audio.revealCard(next.rarity, revealIndex);
   setLabel(`${next.name} · ${RARITY_LABEL[next.rarity]} · ${revealIndex + 1} of ${cards.length}`);
 }
 
@@ -788,18 +814,22 @@ function renderLibrary() {
 }
 
 function openCollection() {
+  void audio.unlock();
+  audio.openCollection();
   library.classList.add('open');
   libraryButton.setAttribute('aria-expanded', 'true');
   closeLibrary.focus({ preventScroll: true });
 }
 
 function closeCollection() {
+  audio.closeCollection();
   library.classList.remove('open');
   libraryButton.setAttribute('aria-expanded', 'false');
   libraryButton.focus({ preventScroll: true });
 }
 
-function restart() {
+function restart({ playSound = true } = {}) {
+  if (playSound) audio.restartPack();
   buildCards((Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0);
   goto('m1');
 }
@@ -810,6 +840,7 @@ function state() {
     focused,
     cutProgress,
     revealIndex,
+    audio: audio.state(),
     cards: cards.map((card) => card.id),
     collectionCount: collectionIds().length,
     carouselOffset,
@@ -826,6 +857,7 @@ function state() {
 
 function pointerDown(event) {
   if (event.button != null && event.button !== 0) return;
+  void audio.unlock();
   if (moment === 'm1') {
     if (wheelSettleTimer) clearTimeout(wheelSettleTimer);
     wheelSettleTimer = null;
@@ -844,7 +876,10 @@ function pointerDown(event) {
     t: now,
     history: [{ x: event.clientX, t: now }],
   };
-  if (moment === 'm2') setLabel(COPY.m2);
+  if (moment === 'm2') {
+    audio.beginCut();
+    setLabel(COPY.m2);
+  }
 }
 
 function pointerMove(event) {
@@ -866,6 +901,7 @@ function pointerMove(event) {
     // keeps the gesture 1:1 when height-constrained on wide displays.
     const progress = Math.max(0, dx / (packScreenWidth() * 0.86));
     setCut(progress);
+    audio.updateCut(progress);
     pack.group.rotation.z = Math.sin(progress * Math.PI * 8) * 0.007;
     setLabel(progress < 0.85 ? COPY.m3 : 'Release to open');
   }
@@ -899,12 +935,14 @@ function pointerUp(event) {
   }
   if ((moment === 'm2' || moment === 'm3') && cutProgress >= 0.78) { animateOpening(); return; }
   if (moment === 'm3') {
+    audio.endCut(false);
     moment = 'm2';
     const start = cutProgress;
     tween({ from: start, to: 0, duration: 0.26, easing: ease.outCubic, onUpdate: setCut });
     setLabel(COPY.m2);
     return;
   }
+  if (moment === 'm2') audio.endCut(false);
   if (moment === 'm6' && !gesture.moved) advance();
 }
 
@@ -914,15 +952,28 @@ renderer.domElement.addEventListener('pointerup', pointerUp);
 renderer.domElement.addEventListener('pointercancel', pointerUp);
 renderer.domElement.addEventListener('wheel', wheelCarousel, { passive: false });
 renderer.domElement.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); advance(); }
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault();
+    void audio.unlock();
+    advance();
+  }
   if (event.key === 'Escape' && library.classList.contains('open')) closeCollection();
 });
 
 libraryButton.addEventListener('click', openCollection);
 closeLibrary.addEventListener('click', closeCollection);
-skipButton.addEventListener('click', () => goto('m6'));
+audioButton.addEventListener('click', () => {
+  void audio.unlock();
+  audio.toggleMuted();
+});
+skipButton.addEventListener('click', () => {
+  audio.endCut(false);
+  goto('m6');
+  audio.revealCard(cards[0]?.rarity, 0);
+});
 library.addEventListener('click', (event) => { if (event.target === library) closeCollection(); });
 document.addEventListener('keydown', (event) => { if (event.key === 'Escape' && library.classList.contains('open')) closeCollection(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) audio.suspend(); });
 window.addEventListener('resize', () => {
   if (moment === 'm1') layoutSelection();
   else if (moment === 'm2' || moment === 'm3') {

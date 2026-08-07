@@ -151,6 +151,7 @@
     }
 
     #libraryBtn,
+    #audioBtn,
     #skipBtn,
     #closeLibrary {
       display: grid;
@@ -161,9 +162,9 @@
       -webkit-touch-callout: none;
     }
 
-    #libraryBtn {
+    #libraryBtn,
+    #audioBtn {
       position: absolute;
-      inset-block-start: max(0.75rem, env(safe-area-inset-top));
       inset-inline-end: max(var(--page-gutter), env(safe-area-inset-right));
       width: var(--control-size);
       height: var(--control-size);
@@ -176,7 +177,17 @@
       backdrop-filter: blur(1rem) saturate(155%);
     }
 
-    #libraryBtn svg { width: 1.35rem; height: 1.35rem; }
+    #libraryBtn { inset-block-start: max(0.75rem, env(safe-area-inset-top)); }
+
+    #audioBtn {
+      inset-block-start: calc(max(0.75rem, env(safe-area-inset-top)) + var(--control-size) + 0.65rem);
+    }
+
+    #libraryBtn svg,
+    #audioBtn svg { width: 1.35rem; height: 1.35rem; }
+
+    #audioBtn[aria-pressed="false"] .sound-muted,
+    #audioBtn[aria-pressed="true"] .sound-wave { display: none; }
 
     #libraryBtn .count {
       position: absolute;
@@ -216,6 +227,7 @@
     #skipBtn svg { width: 1.1rem; height: 1.1rem; }
 
     #libraryBtn:active,
+    #audioBtn:active,
     #skipBtn:active,
     #closeLibrary:active,
     .primaryBtn:active,
@@ -223,6 +235,7 @@
     .newPackBtn:active { transform: scale(0.94); transition-duration: 80ms; }
 
     #libraryBtn:focus-visible,
+    #audioBtn:focus-visible,
     #skipBtn:focus-visible,
     #closeLibrary:focus-visible,
     .cardTile:focus-visible,
@@ -569,6 +582,7 @@
       .brand { inset-block-start: max(0.55rem, env(safe-area-inset-top)); }
       .brand-set { display: none; }
       #libraryBtn { inset-block-start: max(0.5rem, env(safe-area-inset-top)); }
+      #audioBtn { inset-block-start: calc(max(0.5rem, env(safe-area-inset-top)) + var(--control-size) + 0.5rem); }
       #skipBtn { inset-block-end: max(0.6rem, env(safe-area-inset-bottom)); }
       #library header { min-height: calc(4.1rem + env(safe-area-inset-top)); padding-block-end: 0.5rem; }
       #library header h1 { font-size: 1.35rem; }
@@ -592,10 +606,12 @@
 
     @media (prefers-reduced-transparency: reduce) {
       #libraryBtn,
+      #audioBtn,
       #skipBtn,
       #closeLibrary,
       .meta-chip { background: #f5f8fc; }
       #libraryBtn,
+      #audioBtn,
       #skipBtn,
       #closeLibrary,
       .meta-chip { -webkit-backdrop-filter: none; backdrop-filter: none; }
@@ -603,6 +619,7 @@
 
     @media (prefers-contrast: more) {
       #libraryBtn,
+      #audioBtn,
       #skipBtn,
       #closeLibrary { border: 2px solid #394967; background: #fff; }
       #library .cardTile { border-color: #50617f; box-shadow: 0 0 0 1px #fff; }
@@ -611,13 +628,13 @@
 
     @media (forced-colors: active) {
       #overlay::after, #library::before { display: none; }
-      #libraryBtn, #skipBtn, #closeLibrary, .meta-chip, #library .cardTile {
+      #libraryBtn, #audioBtn, #skipBtn, #closeLibrary, .meta-chip, #library .cardTile {
         border: 1px solid ButtonText;
         box-shadow: none;
       }
     }
   </style>
-  <script type="module" crossorigin src="./assets/index-G8MgTweQ.js"></script>
+  <script type="module" crossorigin src="./assets/index-Dn9j6Wv8.js"></script>
 </head>
 <body>
   <main id="app" aria-label="Lumen booster pack opening"></main>
@@ -645,6 +662,14 @@
         <path d="m8.2 16 1.8-1.8 1.7 1.7 2.7-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
       <span class="count" id="libCount" aria-label="0 cards">0</span>
+    </button>
+
+    <button id="audioBtn" class="fade" type="button" aria-label="Mute sound" aria-pressed="false">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M5 9.2h3.3l4-3.4v12.4l-4-3.4H5V9.2Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+        <path class="sound-wave" d="M15.2 9.1a4.2 4.2 0 0 1 0 5.8M17.5 6.7a7.6 7.6 0 0 1 0 10.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+        <path class="sound-muted" d="m15.5 9 5 5m0-5-5 5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+      </svg>
     </button>
 
     <button id="skipBtn" class="fade hidden" type="button" aria-label="Skip animation">
