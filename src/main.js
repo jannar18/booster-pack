@@ -522,6 +522,8 @@ function applyMoment(id) {
   moment = id;
   resetTransforms();
   setLabel(COPY[id], true);
+  if (id === 'm1') audio.enterSelection();
+  else audio.leaveSelection();
 
   if (id === 'm1') {
     layoutSelection();

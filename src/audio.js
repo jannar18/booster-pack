@@ -13,6 +13,7 @@ const SAMPLE_FILES = {
   cardContact1: 'card-contact-1.mp3',
   cardContact2: 'card-contact-2.mp3',
   auroraChime: 'aurora-chime.mp3',
+  selectionAmbience: 'selection-ambience.mp3',
 };
 
 const CUT_GRAINS = ['grain1', 'grain2', 'grain3', 'grain4'];
@@ -33,6 +34,9 @@ export function createAudioController({ onMuteChange } = {}) {
   let cutSampleTime = 0;
   let nextGrainTime = 0;
   let grainIndex = 0;
+  let carouselCueIndex = 0;
+  let selectionRequested = false;
+  let selectionVoice = null;
   const buffers = new Map();
   const activeSources = new Set();
 
@@ -87,7 +91,7 @@ export function createAudioController({ onMuteChange } = {}) {
       try { await ctx.resume(); }
       catch { return false; }
     }
-    void loadSamples();
+    void loadSamples().then(() => startSelectionAmbience());
     return ctx.state === 'running';
   }
 
@@ -137,12 +141,58 @@ export function createAudioController({ onMuteChange } = {}) {
     return source;
   }
 
+  function startSelectionAmbience() {
+    if (!context || muted || !selectionRequested || selectionVoice) return;
+    const buffer = buffers.get('selectionAmbience');
+    if (!buffer) return;
+    const source = context.createBufferSource();
+    const envelope = context.createGain();
+    const now = context.currentTime;
+    source.buffer = buffer;
+    source.loop = true;
+    source.loopEnd = buffer.duration;
+    envelope.gain.setValueAtTime(0.0001, now);
+    envelope.gain.exponentialRampToValueAtTime(0.46, now + 1.1);
+    source.connect(envelope);
+    envelope.connect(magicBus);
+    source.addEventListener('ended', () => {
+      activeSources.delete(source);
+      if (selectionVoice?.source === source) selectionVoice = null;
+    }, { once: true });
+    activeSources.add(source);
+    selectionVoice = { source, envelope };
+    source.start(now);
+  }
+
+  function stopSelectionAmbience(fade = 0.38) {
+    if (!selectionVoice || !context) return;
+    const voice = selectionVoice;
+    selectionVoice = null;
+    const now = context.currentTime;
+    voice.envelope.gain.cancelScheduledValues(now);
+    voice.envelope.gain.setValueAtTime(Math.max(0.0001, voice.envelope.gain.value), now);
+    voice.envelope.gain.exponentialRampToValueAtTime(0.0001, now + fade);
+    try { voice.source.stop(now + fade + 0.03); }
+    catch { /* The source may already have ended. */ }
+  }
+
+  function enterSelection() {
+    selectionRequested = true;
+    if (!muted && context?.state === 'running') void loadSamples().then(() => startSelectionAmbience());
+  }
+
+  function leaveSelection() {
+    selectionRequested = false;
+    stopSelectionAmbience();
+  }
+
   function setMuted(nextMuted) {
     muted = Boolean(nextMuted);
     try { localStorage.setItem(MUTE_STORAGE_KEY, String(muted)); }
     catch { /* Storage may be unavailable in private contexts. */ }
     if (muted) {
       cutRequested = false;
+      stopSelectionAmbience(0.025);
       activeSources.forEach((source) => {
         try { source.stop(); }
         catch { /* The source may already have ended. */ }
@@ -204,11 +254,20 @@ export function createAudioController({ onMuteChange } = {}) {
     beginCut,
     updateCut,
     endCut,
+    enterSelection,
+    leaveSelection,
     selectPack() {
+      leaveSelection();
       whenReady(() => playSample('packTouch', { gain: 0.55, rate: 0.92 }));
     },
     carouselStep() {
-      whenReady(() => playSample('packTouch', { gain: 0.13, rate: 1.26 }));
+      whenReady(() => {
+        const foil = CUT_GRAINS[carouselCueIndex % CUT_GRAINS.length];
+        const pan = carouselCueIndex % 2 ? 0.24 : -0.24;
+        carouselCueIndex += 1;
+        playSample(foil, { gain: 0.3, rate: 1.08 + (carouselCueIndex % 3) * 0.045, pan, duration: 0.15 });
+        playSample('auroraChime', { gain: 0.34, rate: 1.34, pan: -pan * 0.45, delay: 0.028, duration: 0.3, bus: 'magic' });
+      });
     },
     releaseSeal() {
       whenReady(() => playSample('sealRelease', { gain: 0.68, rate: 1.03 }));
@@ -246,6 +305,7 @@ export function createAudioController({ onMuteChange } = {}) {
     },
     suspend() {
       cutRequested = false;
+      stopSelectionAmbience(0.02);
       activeSources.forEach((source) => {
         try { source.stop(); }
         catch { /* The source may already have ended. */ }
@@ -259,6 +319,8 @@ export function createAudioController({ onMuteChange } = {}) {
       contextState: context?.state || 'uninitialized',
       samplesLoaded: buffers.size,
       cutting: cutRequested,
+      selectionRequested,
+      selectionAmbience: Boolean(selectionVoice),
     }),
   };
 
