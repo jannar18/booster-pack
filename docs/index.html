@@ -138,41 +138,16 @@
       pointer-events: none !important;
     }
 
-    #openLabel {
+    .sr-only {
       position: absolute;
-      inset-block-start: clamp(4.75rem, 11svh, 7rem);
-      inset-inline-start: 50%;
-      max-width: min(80vw, 24rem);
-      min-height: 2.5rem;
-      padding: 0.65rem 1rem 0.62rem;
-      transform: translateX(-50%);
-      border: 1px solid rgba(255, 255, 255, 0.72);
-      border-radius: 999px;
-      background: rgba(47, 59, 89, 0.42);
-      box-shadow: 0 0.55rem 1.7rem rgba(64, 85, 127, 0.18), inset 0 1px rgba(255, 255, 255, 0.28);
-      -webkit-backdrop-filter: blur(1rem) saturate(150%);
-      backdrop-filter: blur(1rem) saturate(150%);
-      color: #fff;
-      font-size: clamp(0.76rem, 3.4vw, 0.9rem);
-      font-weight: 750;
-      line-height: 1.1;
-      letter-spacing: 0.055em;
-      text-align: center;
-      text-wrap: balance;
-      text-shadow: 0 1px 0.5rem rgba(34, 48, 79, 0.48);
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
       white-space: nowrap;
-    }
-
-    #openLabel::before {
-      content: "";
-      display: inline-block;
-      width: 0.42rem;
-      height: 0.42rem;
-      margin-inline-end: 0.5rem;
-      border-radius: 50%;
-      background: #fff5ba;
-      box-shadow: 0 0 0.5rem #fff, 0 0 1rem rgba(255, 221, 116, 0.95);
-      vertical-align: 0.06em;
+      border: 0;
     }
 
     #libraryBtn,
@@ -594,7 +569,6 @@
       .brand { inset-block-start: max(0.55rem, env(safe-area-inset-top)); }
       .brand-set { display: none; }
       #libraryBtn { inset-block-start: max(0.5rem, env(safe-area-inset-top)); }
-      #openLabel { inset-block-start: max(0.65rem, env(safe-area-inset-top)); }
       #skipBtn { inset-block-end: max(0.6rem, env(safe-area-inset-bottom)); }
       #library header { min-height: calc(4.1rem + env(safe-area-inset-top)); padding-block-end: 0.5rem; }
       #library header h1 { font-size: 1.35rem; }
@@ -617,12 +591,10 @@
     }
 
     @media (prefers-reduced-transparency: reduce) {
-      #openLabel { background: rgba(42, 54, 82, 0.94); }
       #libraryBtn,
       #skipBtn,
       #closeLibrary,
       .meta-chip { background: #f5f8fc; }
-      #openLabel,
       #libraryBtn,
       #skipBtn,
       #closeLibrary,
@@ -630,7 +602,6 @@
     }
 
     @media (prefers-contrast: more) {
-      #openLabel { border: 2px solid #fff; background: #293958; }
       #libraryBtn,
       #skipBtn,
       #closeLibrary { border: 2px solid #394967; background: #fff; }
@@ -640,13 +611,13 @@
 
     @media (forced-colors: active) {
       #overlay::after, #library::before { display: none; }
-      #libraryBtn, #skipBtn, #closeLibrary, #openLabel, .meta-chip, #library .cardTile {
+      #libraryBtn, #skipBtn, #closeLibrary, .meta-chip, #library .cardTile {
         border: 1px solid ButtonText;
         box-shadow: none;
       }
     }
   </style>
-  <script type="module" crossorigin src="./assets/index-CqiZmvtx.js"></script>
+  <script type="module" crossorigin src="./assets/index-Cfw4rWQN.js"></script>
 </head>
 <body>
   <main id="app" aria-label="Lumen booster pack opening"></main>
@@ -665,7 +636,7 @@
       </span>
     </div>
 
-    <div id="openLabel" class="fade hidden" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div id="openLabel" class="sr-only hidden" role="status" aria-live="polite" aria-atomic="true"></div>
 
     <button id="libraryBtn" class="fade" type="button" aria-label="Open collection" aria-controls="library">
       <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
